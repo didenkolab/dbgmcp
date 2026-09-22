@@ -17,7 +17,7 @@ func toWaitOut(ev model.StopEvent) WaitOut {
 	return WaitOut{
 		State: string(ev.State), Reason: string(ev.Reason), BreakpointID: ev.BreakpointID,
 		Unit: ev.Unit, Frames: ev.Frames, Variables: ev.Variables, Source: ev.Source,
-		ExitStatus: ev.ExitStatus, Message: ev.Message,
+		ExitStatus: ev.ExitStatus, RecentOutput: ev.RecentOutput, Message: ev.Message,
 	}
 }
 

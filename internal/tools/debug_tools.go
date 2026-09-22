@@ -127,15 +127,16 @@ type WaitIn struct {
 // agent learns where it stopped, why, with what stack and what variables,
 // without four more calls.
 type WaitOut struct {
-	State        string            `json:"state"`
-	Reason       string            `json:"reason"`
-	BreakpointID string            `json:"breakpoint_id,omitempty"`
-	Unit         *model.ExecUnit   `json:"unit,omitempty"`
-	Frames       []model.Frame     `json:"frames,omitempty"`
-	Variables    []model.Variable  `json:"variables,omitempty"`
-	Source       *model.SourceSpan `json:"source,omitempty"`
-	ExitStatus   *int              `json:"exit_status,omitempty"`
-	Message      string            `json:"message,omitempty"`
+	State        string              `json:"state"`
+	Reason       string              `json:"reason"`
+	BreakpointID string              `json:"breakpoint_id,omitempty"`
+	Unit         *model.ExecUnit     `json:"unit,omitempty"`
+	Frames       []model.Frame       `json:"frames,omitempty"`
+	Variables    []model.Variable    `json:"variables,omitempty"`
+	Source       *model.SourceSpan   `json:"source,omitempty"`
+	ExitStatus   *int                `json:"exit_status,omitempty"`
+	RecentOutput []model.OutputChunk `json:"recent_output,omitempty" jsonschema:"The last lines the debuggee printed before it stopped. Use get_session_output for the rest."`
+	Message      string              `json:"message,omitempty"`
 }
 
 func (r *Registry) waitForPause(ctx context.Context, _ *mcp.CallToolRequest, in WaitIn) (*mcp.CallToolResult, WaitOut, error) {
@@ -154,7 +155,7 @@ func (r *Registry) waitForPause(ctx context.Context, _ *mcp.CallToolRequest, in 
 	return ok(WaitOut{
 		State: string(ev.State), Reason: string(ev.Reason), BreakpointID: ev.BreakpointID,
 		Unit: ev.Unit, Frames: ev.Frames, Variables: ev.Variables, Source: ev.Source,
-		ExitStatus: ev.ExitStatus, Message: ev.Message,
+		ExitStatus: ev.ExitStatus, RecentOutput: ev.RecentOutput, Message: ev.Message,
 	})
 }
 

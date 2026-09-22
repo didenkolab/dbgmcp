@@ -62,6 +62,14 @@ type Backend interface {
 	// NonSuspendingTrace=suspend_only and set PerturbsTiming on the result.
 	Trace(ctx context.Context, probes []model.Probe, timeout time.Duration) (model.Transcript, error)
 
+	// Status reports where the session is right now without waiting for
+	// anything, for re-inspecting a pause the agent has already seen.
+	Status(ctx context.Context) (model.StopEvent, error)
+	// Output returns what the debuggee printed, from a cursor. It keeps working
+	// after the process exits, because a program's last words are most useful
+	// once it is dead.
+	Output(ctx context.Context, since, limit int) (model.OutputPage, error)
+
 	Source(ctx context.Context, file string, line, contextLines int) (*model.SourceSpan, error)
 	// SetVariable changes a value in the running program.
 	SetVariable(ctx context.Context, frameIndex int, name, value string) error

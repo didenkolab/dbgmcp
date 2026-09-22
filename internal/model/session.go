@@ -72,7 +72,11 @@ type StopEvent struct {
 	Variables    []Variable   `json:"variables,omitempty"`
 	Source       *SourceSpan  `json:"source,omitempty"`
 	ExitStatus   *int         `json:"exit_status,omitempty"`
-	Message      string       `json:"message,omitempty"`
+	// RecentOutput is the last thing the debuggee printed before it stopped.
+	// It rides along because "what did the program just say" is asked at almost
+	// every pause, and outside an IDE there is no console to glance at.
+	RecentOutput []OutputChunk `json:"recent_output,omitempty"`
+	Message      string        `json:"message,omitempty"`
 }
 
 type SourceSpan struct {

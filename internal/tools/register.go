@@ -149,6 +149,20 @@ func (r *Registry) Register(s *mcp.Server) {
 	}, r.traceExecution)
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_debug_session_status",
+		Annotations: readOnly("Get Debug Session Status"),
+		Description: "Report where the session is right now without waiting: location, stack, variables, source and the debuggee's recent output. " +
+			"Use this to re-inspect a pause you have already seen, instead of resuming and waiting again.",
+	}, r.getDebugSessionStatus)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_session_output",
+		Annotations: readOnly("Get Session Output"),
+		Description: "Return what the debuggee printed on stdout and stderr. There is no IDE console here, so this is the only way to see it. " +
+			"Pass the previous call's next_since to read only what is new. It keeps working after the process exits, which is when a program's last words matter most.",
+	}, r.getSessionOutput)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_variables",
 		Annotations: readOnly("Get Variables"),
 		Description: "Read the arguments and locals of a stack frame. Arguments come first, because when a function returns the wrong answer, what went in is usually the more useful half.",

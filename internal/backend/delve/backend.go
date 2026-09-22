@@ -257,6 +257,17 @@ func isTracepointOnly(state *api.DebuggerState) bool {
 	return hitSomething
 }
 
+// Status answers "where are we" without waiting. It is the tool an agent
+// reaches for after wandering off to read source: the pause is still there, and
+// re-deriving it should not need another resume.
+func (b *Backend) Status(context.Context) (model.StopEvent, error) {
+	return b.currentStop()
+}
+
+func (b *Backend) Output(_ context.Context, since, limit int) (model.OutputPage, error) {
+	return b.sup.output.page(since, limit), nil
+}
+
 func (b *Backend) currentStop() (model.StopEvent, error) {
 	c, err := b.sup.rpc()
 	if err != nil {
@@ -319,6 +330,10 @@ func (b *Backend) stopFromState(state *api.DebuggerState) (model.StopEvent, erro
 		}
 	}
 	ev.Variables, _ = b.variablesAt(c, goroutineID, 0, budget)
+
+	// The last few lines the program printed, so the commonest follow-up
+	// question needs no second call.
+	ev.RecentOutput = b.sup.output.tail(10)
 
 	if th != nil && th.File != "" {
 		ev.Source = readSourceSpan(th.File, th.Line, 4)

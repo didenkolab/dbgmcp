@@ -314,3 +314,80 @@ func TestLiveTraceRefusesAProbeOnAnExistingBreakpointClearly(t *testing.T) {
 		t.Errorf("a failed trace left probes behind: %d breakpoints remain", len(bps))
 	}
 }
+
+// TestLiveCapturesWhatTheDebuggeePrinted covers the gap that has no workaround
+// outside an IDE: with no console to look at, a program's own output would be
+// invisible to the agent entirely.
+func TestLiveCapturesWhatTheDebuggeePrinted(t *testing.T) {
+	b := startFixture(t, model.LaunchDebug)
+	ctx := context.Background()
+
+	if err := b.Resume(ctx); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	ev, err := b.WaitForStop(ctx, 60*time.Second)
+	if err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if ev.State != model.StateExited {
+		t.Fatalf("expected the fixture to run to completion, got %s", ev.State)
+	}
+
+	page, err := b.Output(ctx, 0, 100)
+	if err != nil {
+		t.Fatalf("output: %v", err)
+	}
+	var all string
+	for _, c := range page.Chunks {
+		all += c.Text + "\n"
+	}
+	// The fixture prints both of these; reading them back proves the redirect,
+	// the tailer and the drain-on-exit all work.
+	for _, want := range []string{"subtotal: 260", "from worker: 260"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("captured output is missing %q; got:\n%s", want, all)
+		}
+	}
+	if page.Dropped != 0 {
+		t.Errorf("nothing should have been dropped, got %d", page.Dropped)
+	}
+
+	// The cursor must leave nothing new behind it.
+	if next, err := b.Output(ctx, page.NextSince, 100); err != nil || len(next.Chunks) != 0 {
+		t.Errorf("reading past the cursor returned %d chunks (err=%v)", len(next.Chunks), err)
+	}
+}
+
+// TestLiveStatusReportsThePauseWithoutResuming keeps re-inspection free: an
+// agent that wandered off to read source must not have to resume to find out
+// where it still is.
+func TestLiveStatusReportsThePauseWithoutResuming(t *testing.T) {
+	b := startFixture(t, model.LaunchDebug)
+	ctx := context.Background()
+
+	if _, err := b.SetBreakpoint(ctx, model.Breakpoint{Location: model.Location{Symbol: "main.lineTotal"}}); err != nil {
+		t.Fatalf("set breakpoint: %v", err)
+	}
+	if err := b.Resume(ctx); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	first, err := b.WaitForStop(ctx, 60*time.Second)
+	if err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+
+	again, err := b.Status(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if again.State != model.StatePaused {
+		t.Fatalf("status lost the pause: %s", again.State)
+	}
+	if len(again.Frames) == 0 || len(first.Frames) == 0 {
+		t.Fatal("no frames to compare")
+	}
+	if again.Frames[0].Line != first.Frames[0].Line || again.Frames[0].Function != first.Frames[0].Function {
+		t.Errorf("status moved the program: was %s:%d, now %s:%d",
+			first.Frames[0].Function, first.Frames[0].Line, again.Frames[0].Function, again.Frames[0].Line)
+	}
+}

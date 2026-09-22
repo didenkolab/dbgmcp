@@ -14,7 +14,7 @@ func TestLaunchArgsSendTheBuiltBinaryToOurOwnDirectory(t *testing.T) {
 	// directory and rely on its own exit to clean it up -- which never happens,
 	// because this server kills the process group.
 	for _, mode := range []model.LaunchMode{model.LaunchDebug, model.LaunchTest} {
-		args, _, err := launchArgs(mode, ".", "/tmp/s.sock", "/tmp/dbgmcp-x/debug.bin", nil, "")
+		args, _, err := launchArgs(mode, ".", "/tmp/s.sock", "/tmp/dbgmcp-x/debug.bin", redirectPaths{}, nil, "")
 		if err != nil {
 			t.Fatalf("%s: %v", mode, err)
 		}
@@ -27,7 +27,7 @@ func TestLaunchArgsSendTheBuiltBinaryToOurOwnDirectory(t *testing.T) {
 func TestLaunchArgsDoNotRebuildAnAlreadyBuiltBinary(t *testing.T) {
 	// exec takes the binary as given; passing --output would be meaningless and
 	// Delve rejects it.
-	args, optimisationsDisabled, err := launchArgs(model.LaunchExec, "./app", "/tmp/s.sock", "/tmp/dbgmcp-x/debug.bin", nil, "")
+	args, optimisationsDisabled, err := launchArgs(model.LaunchExec, "./app", "/tmp/s.sock", "/tmp/dbgmcp-x/debug.bin", redirectPaths{}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestLaunchArgsDoNotRebuildAnAlreadyBuiltBinary(t *testing.T) {
 }
 
 func TestLaunchArgsPutTestFilterBeforeProgramArguments(t *testing.T) {
-	args, _, err := launchArgs(model.LaunchTest, ".", "/tmp/s.sock", "/tmp/o.bin", []string{"-x"}, "TestFoo")
+	args, _, err := launchArgs(model.LaunchTest, ".", "/tmp/s.sock", "/tmp/o.bin", redirectPaths{}, []string{"-x"}, "TestFoo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,23 @@ func TestLaunchArgsPutTestFilterBeforeProgramArguments(t *testing.T) {
 }
 
 func TestLaunchArgsRejectAnUnknownMode(t *testing.T) {
-	if _, _, err := launchArgs("teleport", ".", "/tmp/s.sock", "/tmp/o.bin", nil, ""); err == nil {
+	if _, _, err := launchArgs("teleport", ".", "/tmp/s.sock", "/tmp/o.bin", redirectPaths{}, nil, ""); err == nil {
 		t.Fatal("an unknown launch mode must be refused, not guessed at")
+	}
+}
+
+func TestLaunchArgsRedirectBothDebuggeeStreamsToSeparateFiles(t *testing.T) {
+	// Delve's own log lines go to its stderr; letting the debuggee's stderr land
+	// there too would interleave them beyond recovery.
+	args, _, err := launchArgs(model.LaunchDebug, ".", "/tmp/s.sock", "/tmp/o.bin",
+		redirectPaths{stdout: "/tmp/t/stdout", stderr: "/tmp/t/stderr"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := joined(args)
+	for _, want := range []string{"stdout:/tmp/t/stdout", "stderr:/tmp/t/stderr"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing redirect %q in: %s", want, got)
+		}
 	}
 }

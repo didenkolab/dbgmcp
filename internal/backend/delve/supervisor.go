@@ -38,6 +38,11 @@ type supervisor struct {
 	tmpDir  string
 	stderr  *strings.Builder
 	stopped bool
+
+	// output holds what the debuggee printed. It outlives the process on
+	// purpose: the most useful moment to read a program's last words is after
+	// it has died.
+	output outputBuffer
 }
 
 // launchArgs turns a neutral LaunchRequest into a dlv command line.
@@ -45,7 +50,13 @@ type supervisor struct {
 // dlv debug and dlv test compile with the optimiser and inliner off by default,
 // which is why the agent can see local variables at all; dlv exec takes the
 // binary as given, so the caller is told the difference.
-func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, args []string, testRun string) ([]string, bool, error) {
+// redirectPaths names the two files Delve is told to send the debuggee's
+// streams into. They are separate files rather than Delve's own stdout because
+// the debuggee's stderr would otherwise be interleaved with Delve's log lines,
+// and an agent cannot unpick that afterwards.
+type redirectPaths struct{ stdout, stderr string }
+
+func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, redirects redirectPaths, args []string, testRun string) ([]string, bool, error) {
 	var sub string
 	switch mode {
 	case model.LaunchTest:
@@ -67,6 +78,12 @@ func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, args 
 	// directory we already remove, instead of accumulating in the user's repo.
 	if buildOutput != "" && mode != model.LaunchExec {
 		out = append(out, "--output="+buildOutput)
+	}
+	if redirects.stdout != "" {
+		out = append(out, "-r", "stdout:"+redirects.stdout)
+	}
+	if redirects.stderr != "" {
+		out = append(out, "-r", "stderr:"+redirects.stderr)
 	}
 	if target != "" {
 		out = append(out, target)
@@ -90,8 +107,19 @@ func (s *supervisor) start(ctx context.Context, dlvPath string, req model.Launch
 	}
 	socket := filepath.Join(tmpDir, "dlv.sock")
 	buildOutput := filepath.Join(tmpDir, "debug.bin")
+	redirects := redirectPaths{
+		stdout: filepath.Join(tmpDir, "stdout"),
+		stderr: filepath.Join(tmpDir, "stderr"),
+	}
+	// Create them up front so the tailers have something to open immediately
+	// rather than racing the debuggee's first write.
+	for _, path := range []string{redirects.stdout, redirects.stderr} {
+		if f, createErr := os.Create(path); createErr == nil {
+			_ = f.Close()
+		}
+	}
 
-	args, optimisationsDisabled, err := launchArgs(req.Mode, req.Target, socket, buildOutput, req.Args, req.TestRun)
+	args, optimisationsDisabled, err := launchArgs(req.Mode, req.Target, socket, buildOutput, redirects, req.Args, req.TestRun)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		return false, err
@@ -112,6 +140,9 @@ func (s *supervisor) start(ctx context.Context, dlvPath string, req model.Launch
 		os.RemoveAll(tmpDir)
 		return false, fmt.Errorf("could not start Delve (%s): %w", dlvPath, err)
 	}
+
+	s.output.follow(redirects.stdout, model.StreamStdout)
+	s.output.follow(redirects.stderr, model.StreamStderr)
 
 	s.mu.Lock()
 	s.cmd, s.tmpDir, s.stderr = cmd, tmpDir, &strings.Builder{}
@@ -225,6 +256,8 @@ func (s *supervisor) kill() {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	}
+	// Take a last reading before the files go with the directory.
+	s.output.close()
 	if tmpDir != "" {
 		_ = os.RemoveAll(tmpDir)
 	}
