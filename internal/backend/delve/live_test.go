@@ -457,3 +457,45 @@ func TestLiveNilRendersAsNilNotAsNothing(t *testing.T) {
 		t.Errorf("a nil error rendered as %q, which reads as a failure to read it", got.Value)
 	}
 }
+
+// TestLiveExplainValueShowsWhereTheWrongNumberCameFrom is the project's
+// headline claim, as a test: the agent asks why a value is wrong and gets the
+// sequence of changes, not a place to start guessing from.
+func TestLiveExplainValueShowsWhereTheWrongNumberCameFrom(t *testing.T) {
+	b := startFixture(t, model.LaunchDebug)
+
+	h, err := b.ExplainValue(context.Background(), model.ExplainRequest{
+		Scope:      model.Location{Symbol: "main.Subtotal"},
+		Expression: "total",
+	}, 90*time.Second)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+
+	// The cart is 10x3, 40x2 and 150x4, so a correct accumulator would read
+	// 30, 110 and 710. The third write is where the bug shows itself.
+	if h.Initial != "0" {
+		t.Errorf("initial value was %q, expected 0", h.Initial)
+	}
+	if len(h.Writes) < 3 {
+		t.Fatalf("expected at least three writes, got %d (%s): %+v", len(h.Writes), h.Status, h.Writes)
+	}
+	want := []struct{ from, to string }{{"0", "30"}, {"30", "110"}, {"110", "260"}}
+	for i, w := range want {
+		got := h.Writes[i]
+		if got.From != w.from || got.To != w.to {
+			t.Errorf("write %d was %s -> %s, expected %s -> %s", i+1, got.From, got.To, w.from, w.to)
+		}
+		if got.Line == 0 {
+			t.Errorf("write %d has no location", i+1)
+		}
+	}
+	// 260 rather than 710: the third write added the chair's price once instead
+	// of four times, and the history points straight at it.
+	if h.Final != "260" {
+		t.Errorf("final value %q; the fixture no longer demonstrates the bug", h.Final)
+	}
+	t.Logf("%s: %s -> %s in %d writes (%s); third write %s -> %s at %s:%d",
+		h.Expression, h.Initial, h.Final, len(h.Writes), h.Status,
+		h.Writes[2].From, h.Writes[2].To, h.Writes[2].File, h.Writes[2].Line)
+}

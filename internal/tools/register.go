@@ -139,6 +139,14 @@ func (r *Registry) Register(s *mcp.Server) {
 	}, r.getUnitAncestors)
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "explain_value",
+		Annotations: mutating("Explain Value"),
+		Description: "Answer 'why is this value wrong' directly: follow one variable and return every change to it -- what it was, what it became, where, and with what stack. " +
+			"Use this instead of guessing where to put a breakpoint. Give the expression and the function it lives in; add a condition to pick which call. " +
+			"The history is complete when status is 'frame_returned', meaning the frame holding the value went out of scope.",
+	}, r.explainValue)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "trace_execution",
 		Annotations: mutating("Trace Execution"),
 		Description: "Record expressions at one or more places while the program runs, and return the whole transcript in ONE call. " +
