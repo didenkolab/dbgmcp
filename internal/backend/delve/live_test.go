@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -389,5 +390,43 @@ func TestLiveStatusReportsThePauseWithoutResuming(t *testing.T) {
 	if again.Frames[0].Line != first.Frames[0].Line || again.Frames[0].Function != first.Frames[0].Function {
 		t.Errorf("status moved the program: was %s:%d, now %s:%d",
 			first.Frames[0].Function, first.Frames[0].Line, again.Frames[0].Function, again.Frames[0].Line)
+	}
+}
+
+// TestLiveNeverShowsAPointerAddressAsAValue guards a way of being wrong that is
+// worse than being unreadable: Delve reports a pointer's Value as its address,
+// and passing that through makes "87588325026848" look like an amount when it
+// is a machine address. A decimal backed by a *big.Int is the common shape, and
+// a financial amount is the worst place for the confusion.
+func TestLiveNeverShowsAPointerAddressAsAValue(t *testing.T) {
+	b := startFixture(t, model.LaunchDebug)
+	ctx := context.Background()
+
+	if _, err := b.SetBreakpoint(ctx, model.Breakpoint{Location: model.Location{Symbol: "main.worker"}}); err != nil {
+		t.Fatalf("set breakpoint: %v", err)
+	}
+	if err := b.Resume(ctx); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if _, err := b.WaitForStop(ctx, 60*time.Second); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+
+	// A channel argument is a pointer-shaped value with a real address.
+	got, err := b.Evaluate(ctx, 0, "out", model.ValueBudget{})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got.Kind == "ptr" {
+		if _, convErr := strconv.ParseUint(got.Value, 10, 64); convErr == nil {
+			t.Errorf("a pointer was presented as a bare number, which reads as data: %q", got.Value)
+		}
+	}
+
+	// And a genuine nil pointer must say nil rather than zero, which in a
+	// numeric field is a completely different claim.
+	nilPtr, err := b.Evaluate(ctx, 0, "(*Item)(nil)", model.ValueBudget{})
+	if err == nil && nilPtr.Value != "nil" && nilPtr.Value != "" {
+		t.Errorf("a nil pointer was presented as %q", nilPtr.Value)
 	}
 }

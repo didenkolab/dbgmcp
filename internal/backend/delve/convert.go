@@ -87,6 +87,20 @@ func presentValue(v api.Variable) string {
 	if v.Unreadable != "" {
 		return "<unreadable: " + v.Unreadable + ">"
 	}
+	// Pointers are handled before Value is trusted. Delve sets Value to the
+	// address, and passing that through reads as data: a *big.Int inside a
+	// decimal came back as "87588325026848", which is a plausible-looking
+	// amount and is in fact a pointer. Showing the type instead is worse to
+	// look at and impossible to misread.
+	if v.Kind.String() == "ptr" {
+		if len(v.Children) == 0 || (len(v.Children) == 1 && v.Children[0].Addr == 0) {
+			return "nil"
+		}
+		if inner := presentValue(v.Children[0]); inner != "" {
+			return "*" + inner
+		}
+		return "*" + v.Type
+	}
 	if v.Value != "" {
 		return v.Value
 	}
@@ -113,11 +127,6 @@ func presentValue(v api.Variable) string {
 		return v.Type + " len=" + strconv.FormatInt(v.Len, 10) + " cap=" + strconv.FormatInt(v.Cap, 10)
 	case "map":
 		return v.Type + " len=" + strconv.FormatInt(v.Len, 10)
-	case "ptr":
-		if len(v.Children) == 0 {
-			return "nil"
-		}
-		return v.Type
 	}
 	return v.Value
 }
@@ -125,6 +134,12 @@ func presentValue(v api.Variable) string {
 // shortValue is the one-line form used inside a struct rendering, where nesting
 // further would defeat the point of having a single readable line.
 func shortValue(v api.Variable) string {
+	if v.Kind.String() == "ptr" {
+		if len(v.Children) == 0 || (len(v.Children) == 1 && v.Children[0].Addr == 0) {
+			return "nil"
+		}
+		return "*" + v.Children[0].Type
+	}
 	if v.Value != "" {
 		return v.Value
 	}
