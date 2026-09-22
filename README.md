@@ -59,11 +59,15 @@ be less useful.
 watchpoints, non-suspending tracing, per-unit hit counts, calling functions during evaluation.
 Plan against it instead of discovering the limits by failing into them.
 
-**Tracing without stopping: `trace_execution`.** Declare where to record and what to record, and
-get the whole transcript back from one call. Delve evaluates the expressions itself at every hit
-and resumes on its own, so the agent is never in the loop and the program never waits on it.
-Watching a thousand iterations costs one call, not a thousand -- and the result says
-`perturbs_timing: false`, which matters when what you are chasing is a race.
+**`trace_execution`: a whole run in one call.** Declare where to record and what to record, and get
+the transcript back from one call. Delve evaluates the expressions itself at every hit and resumes
+on its own, so watching a thousand iterations costs one call, not a thousand.
+
+The saving is **round trips, not observer effect**, and the result says which you got. Without eBPF
+-- so on macOS always, and on Linux unless `dlv --ebpf` is enabled and privileged -- Delve stops the
+debuggee at every hit and resumes it itself, so the transcript reports `mode: "auto_continue"` and
+`perturbs_timing: true`. Genuinely non-stop tracing is `mode: "buffered"`, and it is not available
+here. An agent chasing a race reads that from the response rather than from this paragraph.
 
 **It finds its own targets.** `list_debug_targets` reads the project and reports the main packages
 and every test function by name. An IDE plugin can list run configurations because a human made

@@ -45,8 +45,12 @@ type Transcript struct {
 	// ProbesNeverHit distinguishes an empty transcript from a misplaced probe,
 	// which are the same output but completely different problems.
 	ProbesNeverHit []string `json:"probes_never_hit,omitempty"`
-	// PerturbsTiming is false only where the backend can record without
-	// suspending. An agent chasing a race needs to know which it got.
+	// Mode is how this transcript was actually collected, copied from the
+	// backend's capability so the agent reads it off the result rather than
+	// from a docstring it may never have seen.
+	Mode string `json:"mode"`
+	// PerturbsTiming is false only where the backend records without stopping
+	// the debuggee. An agent chasing a race needs to know which it got.
 	PerturbsTiming bool   `json:"perturbs_timing"`
 	Message        string `json:"message"`
 }

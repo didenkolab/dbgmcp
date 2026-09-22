@@ -15,7 +15,7 @@ package backend
 // worse than no capability model at all, because the agent will trust it.
 type Capabilities struct {
 	Watchpoints        Support     `json:"watchpoints"`
-	NonSuspendingTrace TraceMode   `json:"non_suspending_trace"`
+	TraceMode          TraceMode   `json:"trace_mode"`
 	HitCounts          HitCountsBy `json:"hit_counts"`
 	EvalCallsFunctions Support     `json:"eval_calls_functions"`
 	SetVariable        Support     `json:"set_variable"`
@@ -40,13 +40,20 @@ const (
 
 type TraceMode string
 
+// The three modes are three different deals for the agent, and the difference
+// matters most to the one question tracing is worst at: a race.
 const (
 	// TraceBuffered means hits accumulate inside the debugger and the process
-	// never waits for the agent. This is what makes a ten-thousand-iteration
-	// trace cost one call and leave timing nearly intact.
+	// never stops. For Delve this needs eBPF uprobes, which are Linux-only and
+	// privileged; on macOS the gdbserial backend reports SupportsBPF() == false
+	// and GetBufferedTracepoints() returns nil.
 	TraceBuffered TraceMode = "buffered"
-	// TraceSuspendOnly means every recorded hit stops the world, so tracing
-	// perturbs timing exactly as a breakpoint does.
+	// TraceAutoContinue means the debugger resumes after each hit by itself, so
+	// the agent is never in the loop -- but the debuggee genuinely stops on
+	// every hit, so timing is perturbed exactly as a breakpoint perturbs it.
+	// This is what Delve does everywhere without eBPF.
+	TraceAutoContinue TraceMode = "auto_continue"
+	// TraceSuspendOnly means every hit needs the agent to resume it.
 	TraceSuspendOnly TraceMode = "suspend_only"
 )
 

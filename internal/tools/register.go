@@ -143,6 +143,7 @@ func (r *Registry) Register(s *mcp.Server) {
 		Annotations: mutating("Trace Execution"),
 		Description: "Record expressions at one or more places while the program runs, and return the whole transcript in ONE call. " +
 			"The debugger evaluates the expressions itself at every hit and resumes on its own, so watching a thousand iterations costs one call, not a thousand. " +
+			"Check 'mode' and 'perturbs_timing' in the result: unless mode is 'buffered', the debuggee really did stop at each hit, so the saving is round trips rather than observer effect. " +
 			"Prefer this over set_breakpoint plus resume plus wait loops whenever you already know what you want to watch. " +
 			"Probes that never fired are listed separately, so an empty transcript is distinguishable from a misplaced probe.",
 	}, r.traceExecution)

@@ -183,8 +183,12 @@ func TestLiveTraceRecordsEveryIterationInOneCall(t *testing.T) {
 	if len(tr.Hits) < 3 {
 		t.Fatalf("expected at least three recorded hits, got %d (%s)", len(tr.Hits), tr.Message)
 	}
-	if tr.PerturbsTiming {
-		t.Error("Delve records without suspending, so the transcript must not claim otherwise")
+	// Delve without eBPF stops the debuggee at every hit and resumes it itself.
+	// The saving is round trips, not observer effect, and the transcript has to
+	// say so -- an agent chasing a race must not be told the run was untouched.
+	if !tr.PerturbsTiming || tr.Mode != "auto_continue" {
+		t.Errorf("expected mode=auto_continue with perturbs_timing=true, got mode=%q perturbs=%v",
+			tr.Mode, tr.PerturbsTiming)
 	}
 	if len(tr.ProbesNeverHit) != 0 {
 		t.Errorf("a probe that clearly fired was reported as never hit: %v", tr.ProbesNeverHit)

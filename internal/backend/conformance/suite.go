@@ -327,18 +327,40 @@ func testTrace(t *testing.T, f Fixture) {
 		t.Fatalf("wait: %v", err)
 	}
 
-	switch caps.NonSuspendingTrace {
-	case backend.TraceBuffered:
-		// The defining property: a recording breakpoint must not stop the
-		// program. Reaching the end proves it ran straight through.
+	// Every mode must deliver the thing they share: the run completes without
+	// the agent resuming anything. What differs is whether the debuggee was
+	// stopped along the way, and that is what the transcript has to admit.
+	switch caps.TraceMode {
+	case backend.TraceBuffered, backend.TraceAutoContinue:
 		if ev.State != model.StateExited {
-			t.Errorf("non_suspending_trace is 'buffered' but the target stopped at the tracepoint: state=%s reason=%s",
-				ev.State, ev.Reason)
+			t.Errorf("trace_mode is %q, so the run should have completed without the agent resuming it; state=%s reason=%s",
+				caps.TraceMode, ev.State, ev.Reason)
 		}
 	case backend.TraceSuspendOnly:
 		if ev.State != model.StatePaused {
-			t.Errorf("non_suspending_trace is 'suspend_only' so the target should have stopped, state=%s", ev.State)
+			t.Errorf("trace_mode is 'suspend_only' so the target should have stopped and waited, state=%s", ev.State)
 		}
+	}
+
+	// And the transcript's own account of itself must match the capability.
+	// Getting this wrong is the worst failure available here: an agent chasing
+	// a race would be told the observation was free of observer effect.
+	fresh := start(t, f, f.Launch)
+	tr, err := fresh.Trace(ctx, []model.Probe{{
+		Location: model.Location{Symbol: f.CallSymbol},
+		Record:   []string{f.IntExpr},
+		MaxHits:  1,
+	}}, 60*time.Second)
+	if err != nil {
+		t.Fatalf("trace: %v", err)
+	}
+	if tr.Mode != string(caps.TraceMode) {
+		t.Errorf("transcript reports mode %q but the backend declares %q", tr.Mode, caps.TraceMode)
+	}
+	wantPerturbs := caps.TraceMode != backend.TraceBuffered
+	if tr.PerturbsTiming != wantPerturbs {
+		t.Errorf("trace_mode %q implies perturbs_timing=%v, transcript says %v",
+			caps.TraceMode, wantPerturbs, tr.PerturbsTiming)
 	}
 }
 

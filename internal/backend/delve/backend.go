@@ -41,9 +41,16 @@ func (b *Backend) Name() string { return Name }
 // because the agent will plan against it.
 func (b *Backend) Capabilities() backend.Capabilities {
 	return backend.Capabilities{
-		Watchpoints:        backend.SupportFull,
-		NonSuspendingTrace: backend.TraceBuffered,
-		HitCounts:          backend.HitCountsPerUnit,
+		Watchpoints: backend.SupportFull,
+		// Not "buffered". Delve only buffers hits with eBPF uprobes, which are
+		// Linux-only and privileged and which this server does not enable; the
+		// macOS backend cannot do it at all. What Delve does here is resume
+		// after each hit itself -- no agent round trip, but a real stop each
+		// time. Claiming "buffered" would tell an agent chasing a race that the
+		// trace was free of observer effect, which is the one thing it must not
+		// believe.
+		TraceMode: backend.TraceAutoContinue,
+		HitCounts: backend.HitCountsPerUnit,
 		// Delve can call functions in the target, but doing so runs arbitrary
 		// code in the debuggee, so it is opt-in rather than on.
 		EvalCallsFunctions: backend.SupportGuarded,

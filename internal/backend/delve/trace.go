@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/didenkolab/dbgmcp/internal/backend"
 	"github.com/didenkolab/dbgmcp/internal/model"
 	"github.com/go-delve/delve/service/api"
 )
@@ -73,7 +74,13 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 	b.mu.Unlock()
 	defer b.clearContinue()
 
-	out := model.Transcript{PerturbsTiming: false, Hits: []model.TraceHit{}}
+	mode := b.Capabilities().TraceMode
+	out := model.Transcript{
+		Mode: string(mode),
+		// Anything short of buffered means the debuggee stopped at every hit.
+		PerturbsTiming: mode != backend.TraceBuffered,
+		Hits:           []model.TraceHit{},
+	}
 	counts := make([]int, len(probes))
 	deadline := time.After(timeout)
 

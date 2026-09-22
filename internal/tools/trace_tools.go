@@ -26,7 +26,8 @@ type TraceOut struct {
 	Status         string           `json:"status" jsonschema:"'completed' when every probe met its budget, 'finished' when the program ended first, 'stopped' when something other than a probe halted it, 'timeout' otherwise."`
 	Hits           []model.TraceHit `json:"hits"`
 	ProbesNeverHit []string         `json:"probes_never_hit,omitempty"`
-	PerturbsTiming bool             `json:"perturbs_timing" jsonschema:"False when the backend records without suspending. Matters when chasing a race."`
+	Mode           string           `json:"mode" jsonschema:"How the transcript was collected: 'buffered' (the debuggee never stopped), 'auto_continue' (it stopped at each hit but the debugger resumed it with no agent round-trip), 'suspend_only'."`
+	PerturbsTiming bool             `json:"perturbs_timing" jsonschema:"True when the debuggee was stopped at each hit. Decisive when chasing a race: a perturbed trace can hide or create the very timing you are investigating."`
 	Message        string           `json:"message"`
 }
 
@@ -63,6 +64,6 @@ func (r *Registry) traceExecution(ctx context.Context, _ *mcp.CallToolRequest, i
 	}
 	return ok(TraceOut{
 		Status: string(tr.Status), Hits: tr.Hits, ProbesNeverHit: tr.ProbesNeverHit,
-		PerturbsTiming: tr.PerturbsTiming, Message: tr.Message,
+		Mode: tr.Mode, PerturbsTiming: tr.PerturbsTiming, Message: tr.Message,
 	})
 }
