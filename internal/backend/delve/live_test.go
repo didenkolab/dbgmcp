@@ -430,3 +430,30 @@ func TestLiveNeverShowsAPointerAddressAsAValue(t *testing.T) {
 		t.Errorf("a nil pointer was presented as %q", nilPtr.Value)
 	}
 }
+
+// TestLiveNilRendersAsNilNotAsNothing guards the second half of the same
+// mistake as the pointer case: an empty rendering reads as "I could not tell
+// you", while what it means is "there is nothing here". For a Go error those
+// are opposite conclusions.
+func TestLiveNilRendersAsNilNotAsNothing(t *testing.T) {
+	b := startFixture(t, model.LaunchDebug)
+	ctx := context.Background()
+
+	if _, err := b.SetBreakpoint(ctx, model.Breakpoint{Location: model.Location{Symbol: "main.lineTotal"}}); err != nil {
+		t.Fatalf("set breakpoint: %v", err)
+	}
+	if err := b.Resume(ctx); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if _, err := b.WaitForStop(ctx, 60*time.Second); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+
+	got, err := b.Evaluate(ctx, 0, "error(nil)", model.ValueBudget{})
+	if err != nil {
+		t.Skipf("this backend will not evaluate a nil error literal: %v", err)
+	}
+	if got.Value != "nil" {
+		t.Errorf("a nil error rendered as %q, which reads as a failure to read it", got.Value)
+	}
+}

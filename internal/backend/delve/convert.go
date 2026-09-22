@@ -104,6 +104,20 @@ func presentValue(v api.Variable) string {
 	if v.Value != "" {
 		return v.Value
 	}
+	// An empty rendering is ambiguous in the worst way: for an error or any
+	// other nilable kind it reads as "I could not tell you", when what it
+	// actually means is "there is nothing here". In Go that is the difference
+	// between "no error" and "I do not know", so it is spelled out.
+	switch v.Kind.String() {
+	case "interface", "chan", "func", "unsafe.Pointer":
+		if len(v.Children) == 0 || (len(v.Children) == 1 && v.Children[0].Kind.String() == "invalid") {
+			return "nil"
+		}
+		if inner := presentValue(v.Children[0]); inner != "" {
+			return inner
+		}
+		return v.Type
+	}
 	switch v.Kind.String() {
 	case "struct":
 		// Inline fields: one readable line is cheaper for an agent than the same
@@ -142,6 +156,20 @@ func shortValue(v api.Variable) string {
 	}
 	if v.Value != "" {
 		return v.Value
+	}
+	// An empty rendering is ambiguous in the worst way: for an error or any
+	// other nilable kind it reads as "I could not tell you", when what it
+	// actually means is "there is nothing here". In Go that is the difference
+	// between "no error" and "I do not know", so it is spelled out.
+	switch v.Kind.String() {
+	case "interface", "chan", "func", "unsafe.Pointer":
+		if len(v.Children) == 0 || (len(v.Children) == 1 && v.Children[0].Kind.String() == "invalid") {
+			return "nil"
+		}
+		if inner := presentValue(v.Children[0]); inner != "" {
+			return inner
+		}
+		return v.Type
 	}
 	switch v.Kind.String() {
 	case "struct":
