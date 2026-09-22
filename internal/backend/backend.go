@@ -1,0 +1,46 @@
+package backend
+
+import (
+	"context"
+	"time"
+
+	"github.com/didenkolab/dbgmcp/internal/model"
+)
+
+// Backend is one debugger, driven by one session. Everything above this line is
+// language-neutral; everything below it knows about Delve, DAP or CDP.
+//
+// The interface is deliberately shaped by the richest backend rather than the
+// poorest. Modelling DAP first and then trying to surface Delve's extras yields
+// an abstraction that cannot express them -- the standard
+// lowest-common-denominator failure. Poorer backends enter as a degraded case
+// and say so through Capabilities.
+type Backend interface {
+	Name() string
+	Capabilities() Capabilities
+
+	// Launch starts the target under the debugger. The target is stopped at its
+	// entry point on return, so breakpoints can be set before anything runs --
+	// without this an agent races the program it is trying to observe.
+	Launch(ctx context.Context, req model.LaunchRequest) error
+	// Stop terminates the debuggee and the debugger. It must be safe to call
+	// twice and must leave no orphan process behind.
+	Stop(ctx context.Context) error
+
+	SetBreakpoint(ctx context.Context, bp model.Breakpoint) (model.Breakpoint, error)
+	ListBreakpoints(ctx context.Context) ([]model.Breakpoint, error)
+	RemoveBreakpoint(ctx context.Context, id string) error
+
+	Resume(ctx context.Context) error
+	// WaitForStop blocks until the target next stops or exits. It returns the
+	// whole stopped state -- unit, frames, variables, source -- because the
+	// alternative is four more calls to answer the question the agent already
+	// has.
+	WaitForStop(ctx context.Context, timeout time.Duration) (model.StopEvent, error)
+
+	Variables(ctx context.Context, frameIndex int, budget model.ValueBudget) ([]model.Variable, error)
+	Evaluate(ctx context.Context, frameIndex int, expr string, budget model.ValueBudget) (model.Variable, error)
+	Stack(ctx context.Context, unitID string, maxFrames int) ([]model.Frame, error)
+	ExecUnits(ctx context.Context, limit int) ([]model.ExecUnit, error)
+	Source(ctx context.Context, file string, line, contextLines int) (*model.SourceSpan, error)
+}
