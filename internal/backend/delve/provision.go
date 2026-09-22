@@ -12,11 +12,25 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 )
 
 // RequiredVersion is pinned so a surprise upgrade cannot silently change
 // behaviour underneath a running agent.
 const RequiredVersion = "v1.27.2"
+
+// requiredSeries is the major.minor this server compiles its RPC client
+// against. Patch releases within it keep the API; a different series is an
+// API-mismatch risk, and finding that out through a malformed RPC reply at the
+// first breakpoint is the worst available moment.
+const requiredSeries = "1.27"
+
+// SupportedGoRange is what this Delve accepts in a target binary. Delve refuses
+// a Go version outside it; the refusal is surfaced rather than suppressed with
+// --check-go-version=false, because "the debugger does not understand this
+// binary" is something the agent has to know.
+const SupportedGoRange = "Go 1.25 - 1.27"
 
 // InstallCommand is what a user (or the server) runs to get a usable dlv.
 var InstallCommand = []string{"go", "install", "github.com/go-delve/delve/cmd/dlv@" + RequiredVersion}
@@ -53,6 +67,78 @@ func FindDelve() (string, error) {
 		searched = append(searched, dir)
 	}
 	return "", &NotInstalledError{Searched: searched}
+}
+
+// Info is what is actually installed, as opposed to what is required.
+type Info struct {
+	Path        string `json:"path"`
+	Version     string `json:"version"`
+	SupportedGo string `json:"supported_go"`
+}
+
+// VersionMismatchError is raised before anything is launched. The alternative
+// is discovering the mismatch as a malformed RPC reply somewhere in the middle
+// of a debugging session.
+type VersionMismatchError struct {
+	Path, Found, Required string
+}
+
+func (e *VersionMismatchError) Error() string {
+	return fmt.Sprintf(
+		"the Delve at %s is version %s, but this server speaks the %s RPC API. "+
+			"Install the matching one with: go install github.com/go-delve/delve/cmd/dlv@%s "+
+			"(or point DBGMCP_DLV at it)",
+		e.Path, e.Found, requiredSeries, RequiredVersion)
+}
+
+var (
+	probeMu    sync.Mutex
+	probeCache = map[string]Info{}
+)
+
+// Resolve finds a usable Delve and verifies it, caching the answer because the
+// check costs a process launch and the answer cannot change for a given path
+// within a session.
+func Resolve() (Info, error) {
+	path, err := FindDelve()
+	if err != nil {
+		return Info{}, err
+	}
+	probeMu.Lock()
+	cached, hit := probeCache[path]
+	probeMu.Unlock()
+	if hit {
+		return cached, nil
+	}
+
+	version, err := probeVersion(path)
+	if err != nil {
+		return Info{}, err
+	}
+	if !strings.HasPrefix(version, requiredSeries+".") && version != requiredSeries {
+		return Info{}, &VersionMismatchError{Path: path, Found: version, Required: requiredSeries}
+	}
+
+	info := Info{Path: path, Version: version, SupportedGo: SupportedGoRange}
+	probeMu.Lock()
+	probeCache[path] = info
+	probeMu.Unlock()
+	return info, nil
+}
+
+// probeVersion reads the version out of `dlv version`, whose second line is
+// "Version: 1.27.2".
+func probeVersion(path string) (string, error) {
+	out, err := exec.Command(path, "version").Output()
+	if err != nil {
+		return "", fmt.Errorf("could not run %s version: %w", path, err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if rest, found := strings.CutPrefix(strings.TrimSpace(line), "Version:"); found {
+			return strings.TrimSpace(rest), nil
+		}
+	}
+	return "", fmt.Errorf("could not read a version from `%s version`: %s", path, strings.TrimSpace(string(out)))
 }
 
 func exeSuffix() string {

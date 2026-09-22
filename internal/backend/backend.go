@@ -15,6 +15,13 @@ import (
 // an abstraction that cannot express them -- the standard
 // lowest-common-denominator failure. Poorer backends enter as a degraded case
 // and say so through Capabilities.
+// ToolReporter is implemented by backends that drive an external debugger, so
+// an agent diagnosing odd behaviour can see which binary and version is in use
+// rather than assume the pinned one.
+type ToolReporter interface {
+	Tool() (name, path, version, supports string)
+}
+
 type Backend interface {
 	Name() string
 	Capabilities() Capabilities

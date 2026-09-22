@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/didenkolab/dbgmcp/internal/backend"
@@ -157,19 +158,61 @@ func (r *Registry) listDebugSessions(context.Context, *mcp.CallToolRequest, stru
 	return ok(out)
 }
 
+type BackendTool struct {
+	Name        string `json:"name"`
+	Path        string `json:"path,omitempty"`
+	Version     string `json:"version,omitempty"`
+	SupportedGo string `json:"supported_go,omitempty"`
+}
+
+type DescribeBackendIn struct {
+	SessionID string `json:"session_id,omitempty" jsonschema:"Describe the backend of this session. Omit to describe a backend that has no session yet."`
+	Backend   string `json:"backend,omitempty" jsonschema:"Backend to describe by name, for example 'delve'. Defaults to the only one available."`
+}
+
 type DescribeBackendOut struct {
 	Backend      string               `json:"backend"`
+	Platform     string               `json:"platform" jsonschema:"GOOS/GOARCH the server runs on. Capabilities differ by platform, so this is part of the answer, not trivia."`
+	Tool         BackendTool          `json:"tool"`
 	Capabilities backend.Capabilities `json:"capabilities"`
 	Message      string               `json:"message"`
 }
 
-func (r *Registry) describeBackend(_ context.Context, _ *mcp.CallToolRequest, in SessionRef) (*mcp.CallToolResult, DescribeBackendOut, error) {
-	sess, err := r.store.Resolve(in.SessionID)
-	if err != nil {
-		return fail[DescribeBackendOut]("%s", err.Error())
+// describeBackend answers before any session exists, because the point of
+// capabilities is to plan against them -- and a plan made after launching is a
+// plan made too late.
+func (r *Registry) describeBackend(_ context.Context, _ *mcp.CallToolRequest, in DescribeBackendIn) (*mcp.CallToolResult, DescribeBackendOut, error) {
+	var b backend.Backend
+	if in.SessionID != "" {
+		sess, err := r.store.Resolve(in.SessionID)
+		if err != nil {
+			return fail[DescribeBackendOut]("%s", err.Error())
+		}
+		b = sess.Backend
+	} else {
+		switch in.Backend {
+		case "", delve.Name:
+			b = delve.New()
+		default:
+			return fail[DescribeBackendOut](
+				"Unknown backend %q. This server currently provides: %s.", in.Backend, delve.Name)
+		}
 	}
-	return ok(DescribeBackendOut{
-		Backend: sess.Backend.Name(), Capabilities: sess.Backend.Capabilities(),
-		Message: "Plan against these capabilities rather than discovering the limits by failing into them.",
-	})
+
+	out := DescribeBackendOut{
+		Backend:      b.Name(),
+		Platform:     runtime.GOOS + "/" + runtime.GOARCH,
+		Capabilities: b.Capabilities(),
+		Message: "Plan against these capabilities rather than discovering the limits by failing into them. " +
+			"Capabilities can differ by platform, so read them per backend and per machine.",
+	}
+	if reporter, canReport := b.(backend.ToolReporter); canReport {
+		name, path, version, supports := reporter.Tool()
+		out.Tool = BackendTool{Name: name, Path: path, Version: version, SupportedGo: supports}
+		if path == "" {
+			out.Message = "The external debugger this backend needs was not found. " +
+				"Run `dbgmcp doctor` for the exact command to install it."
+		}
+	}
+	return ok(out)
 }

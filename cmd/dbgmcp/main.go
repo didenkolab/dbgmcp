@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/didenkolab/dbgmcp/internal/backend/delve"
@@ -52,12 +53,14 @@ func stopAll(store *session.Store) {
 // doctor answers "why does this not work" without needing an agent to
 // interrogate the server through the protocol.
 func doctor() {
-	path, err := delve.FindDelve()
+	fmt.Printf("platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	info, err := delve.Resolve()
 	if err != nil {
-		fmt.Println("delve:  NOT FOUND")
-		fmt.Println("       ", err)
+		fmt.Println("delve:    UNUSABLE")
+		fmt.Println("         ", err)
 		os.Exit(1)
 	}
-	fmt.Println("delve:  ", path)
-	fmt.Println("status:  ready")
+	fmt.Printf("delve:    %s (version %s)\n", info.Path, info.Version)
+	fmt.Printf("supports: %s in the target binary\n", info.SupportedGo)
+	fmt.Println("status:   ready")
 }

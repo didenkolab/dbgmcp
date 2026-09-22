@@ -30,6 +30,20 @@ type Backend struct {
 
 	curFrame int
 	pathMap  model.PathMapping
+	info     Info
+}
+
+// Tool reports which Delve this backend is actually using, so an agent
+// diagnosing odd behaviour can see the version rather than assume the pinned
+// one.
+func (b *Backend) Tool() (name, path, version, supports string) {
+	info := b.info
+	if info.Path == "" {
+		if resolved, err := Resolve(); err == nil {
+			info = resolved
+		}
+	}
+	return "dlv", info.Path, info.Version, info.SupportedGo
 }
 
 func New() *Backend { return &Backend{sup: &supervisor{}} }
@@ -62,11 +76,12 @@ func (b *Backend) Capabilities() backend.Capabilities {
 }
 
 func (b *Backend) Launch(ctx context.Context, req model.LaunchRequest) error {
-	dlvPath, err := FindDelve()
+	info, err := Resolve()
 	if err != nil {
 		return err
 	}
-	if _, err := b.sup.start(ctx, dlvPath, req); err != nil {
+	b.info = info
+	if _, err := b.sup.start(ctx, info.Path, req); err != nil {
 		return err
 	}
 	if c, err := b.sup.rpc(); err == nil {
