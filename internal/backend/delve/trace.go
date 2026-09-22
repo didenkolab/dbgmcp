@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/didenkolab/dbgmcp/internal/model"
@@ -56,7 +57,7 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 
 		bp, err := c.CreateBreakpoint(req)
 		if err != nil {
-			return model.Transcript{}, fmt.Errorf("probe %d: could not place a probe: %w", i, err)
+			return model.Transcript{}, probePlacementError(c, i, p, err)
 		}
 		created = append(created, bp.ID)
 		byBreakpointID[bp.ID] = i
@@ -114,6 +115,40 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 			return out, ctx.Err()
 		}
 	}
+}
+
+// probePlacementError turns Delve's refusal into something an agent can act on.
+//
+// The common case is a collision with a breakpoint the agent set earlier to look
+// around, and Delve reports it as "Breakpoint exists at <file>:<line> at <addr>"
+// -- true, but it names neither the breakpoint nor the way out. Taking the
+// existing breakpoint over silently would be worse: it may carry a condition
+// somebody meant to keep.
+func probePlacementError(c interface {
+	ListBreakpoints(bool) ([]*api.Breakpoint, error)
+}, index int, p model.Probe, cause error) error {
+	where := p.Location.Symbol
+	if where == "" {
+		where = fmt.Sprintf("%s:%d", p.Location.File, p.Location.Line)
+	}
+	if !strings.Contains(cause.Error(), "Breakpoint exists") {
+		return fmt.Errorf("probe %d (%s): could not place a probe: %w", index, where, cause)
+	}
+
+	detail := ""
+	if existing, listErr := c.ListBreakpoints(false); listErr == nil {
+		for _, bp := range existing {
+			if bp.ID > 0 && strings.Contains(cause.Error(), fmt.Sprintf("%s:%d", bp.File, bp.Line)) {
+				detail = fmt.Sprintf(" It collides with breakpoint %d at %s:%d.", bp.ID, bp.File, bp.Line)
+				break
+			}
+		}
+	}
+	return fmt.Errorf(
+		"probe %d (%s) cannot be placed: a breakpoint is already set there.%s "+
+			"Remove it with remove_breakpoint first, or trace a different location. "+
+			"It is not taken over automatically because it may carry a condition that was meant to stay",
+		index, where, detail)
 }
 
 func (b *Backend) collectHits(state *api.DebuggerState, probes []model.Probe, byID map[int]int, counts []int, out *model.Transcript) {

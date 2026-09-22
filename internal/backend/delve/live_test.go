@@ -273,3 +273,40 @@ func neverReachedLine(t *testing.T) int {
 	t.Fatal("the fixture no longer contains a NEVER-REACHED marker")
 	return 0
 }
+
+// TestLiveTraceRefusesAProbeOnAnExistingBreakpointClearly covers the collision
+// an agent walks into naturally: set a breakpoint to look around, then try to
+// trace the same place. Delve's own message names neither the breakpoint nor
+// the way out.
+func TestLiveTraceRefusesAProbeOnAnExistingBreakpointClearly(t *testing.T) {
+	b := startFixture(t, model.LaunchDebug)
+	ctx := context.Background()
+
+	bp, err := b.SetBreakpoint(ctx, model.Breakpoint{Location: model.Location{Symbol: "main.lineTotal"}})
+	if err != nil {
+		t.Fatalf("set breakpoint: %v", err)
+	}
+
+	_, err = b.Trace(ctx, []model.Probe{{
+		Location: model.Location{Symbol: "main.lineTotal"},
+		Record:   []string{"it.Price"},
+	}}, 30*time.Second)
+	if err == nil {
+		t.Fatal("tracing onto an existing breakpoint must be refused, not silently taken over")
+	}
+	msg := err.Error()
+	for _, want := range []string{"main.lineTotal", "remove_breakpoint", bp.ID} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not mention %q: %s", want, msg)
+		}
+	}
+
+	// And the failed trace must leave nothing of its own behind.
+	bps, err := b.ListBreakpoints(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(bps) != 1 {
+		t.Errorf("a failed trace left probes behind: %d breakpoints remain", len(bps))
+	}
+}
