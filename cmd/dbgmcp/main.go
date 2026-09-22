@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/didenkolab/dbgmcp/internal/backend/delve"
@@ -62,5 +63,18 @@ func doctor() {
 	}
 	fmt.Printf("delve:    %s (version %s)\n", info.Path, info.Version)
 	fmt.Printf("supports: %s in the target binary\n", info.SupportedGo)
+	// Attaching is the one capability whose availability is a property of the
+	// machine rather than of the debugger, so it is reported here rather than
+	// discovered when an attach fails.
+	if runtime.GOOS == "linux" {
+		if raw, err := os.ReadFile("/proc/sys/kernel/yama/ptrace_scope"); err == nil {
+			scope := strings.TrimSpace(string(raw))
+			note := "attach to any process this user owns"
+			if scope != "0" {
+				note = "attach is limited to descendants of this process"
+			}
+			fmt.Printf("attach:   yama ptrace_scope=%s - %s\n", scope, note)
+		}
+	}
 	fmt.Println("status:   ready")
 }

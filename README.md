@@ -94,6 +94,10 @@ Stated plainly, so nobody mistakes the test suite for more than it is.
   implementation is usually wrong. Treat the interface as unproven.
 - **Local only.** `test`, `debug`, `exec` and `attach` all work, but only against processes on this
   machine. No remote or containerised target; `PathMapping` is modelled and not exercised.
+- **Attaching on Linux is limited by Yama.** `ptrace_scope` is 1 on most
+  distributions and on GitHub's runners, which allows a process to debug only its own
+  descendants -- so attaching to a service started elsewhere needs `CAP_SYS_PTRACE` or
+  `ptrace_scope=0`. `dbgmcp doctor` reports which you have.
 - **Attaching suspends a live process.** Stopping the session detaches without killing it -- that is
   asserted by a test, because the difference is one boolean deep inside teardown. Its output still
   goes wherever it was already going, so `get_session_output` has nothing to show for an attached
