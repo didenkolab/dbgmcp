@@ -15,9 +15,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// maxCallsToFindTheBug is the acceptance criterion, not a detail. A debugger an
-// agent needs thirty round trips to use has failed in spirit even when every
-// individual call works, so the budget is asserted and must not grow.
+// maxCallsToFindTheBug is the acceptance criterion, not a detail.
+//
+// The sequence below is written as the minimum an agent would actually need to
+// locate the bug -- neither padded to look thorough nor golfed to look good.
+// The number is asserted so that a change to the tools which forces the
+// sequence to grow shows up as a failing test, to be justified in the change
+// that caused it rather than absorbed silently. A debugger that takes thirty
+// round trips to use has failed in spirit even when every individual call works.
 const maxCallsToFindTheBug = 6
 
 type agent struct {
