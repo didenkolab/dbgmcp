@@ -59,9 +59,16 @@ be less useful.
 watchpoints, non-suspending tracing, per-unit hit counts, calling functions during evaluation.
 Plan against it instead of discovering the limits by failing into them.
 
-**Tracing without stopping.** A breakpoint with `record` and `suspend: "none"` makes Delve
-evaluate the expressions on every hit and let the process run on, so watching ten thousand
-iterations costs one call rather than ten thousand.
+**Tracing without stopping: `trace_execution`.** Declare where to record and what to record, and
+get the whole transcript back from one call. Delve evaluates the expressions itself at every hit
+and resumes on its own, so the agent is never in the loop and the program never waits on it.
+Watching a thousand iterations costs one call, not a thousand -- and the result says
+`perturbs_timing: false`, which matters when what you are chasing is a race.
+
+**It finds its own targets.** `list_debug_targets` reads the project and reports the main packages
+and every test function by name. An IDE plugin can list run configurations because a human made
+them; with no IDE there is nothing to list, so they are derived from the source instead -- without
+executing anything.
 
 **Tool names match the [JetBrains debugger MCP plugin](https://github.com/hechtcarmel/jetbrains-debugger-mcp-plugin)**
 wherever the semantics match, so one agent and one skill work with an IDE and without one.
@@ -75,13 +82,9 @@ Stated plainly, so nobody mistakes the test suite for more than it is.
   implementation is usually wrong. Treat the interface as unproven.
 - **Launch only.** `test`, `debug` and `exec`. There is no attaching to a process this server did
   not start, and no remote or containerised target. `PathMapping` is modelled but not exercised.
-- **No `trace_execution` tool yet.** The tracepoint primitive works and is covered by the
-  conformance suite (`record` plus `suspend: "none"` genuinely does not stop the program), but the
-  one-call transcript tool built on it is not written.
-- **No `findings`.** The design's analytics layer -- anomalies computed from a transcript -- does
-  not exist.
-- **No `list_debug_targets`.** The agent must be told which package to run; nothing yet discovers
-  them from `go list`.
+- **No `findings`.** The design's analytics layer -- anomalies computed from a transcript, such
+  as a value that was monotonic and stopped being -- does not exist. `trace_execution` returns the
+  transcript; reading it is still the agent's job.
 - **No safety guard on evaluation.** Delve does not call functions by default, which the
   conformance suite verifies, so the worst of the risk is absent rather than defended against.
 - **Watchpoints are hardware watchpoints.** At most four exist at once, and each is bound to the

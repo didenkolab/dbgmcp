@@ -22,6 +22,13 @@ func mutating(title string) *mcp.ToolAnnotations {
 // IDE session and a headless one without branching.
 func (r *Registry) Register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_debug_targets",
+		Annotations: readOnly("List Debug Targets"),
+		Description: "Discover what can be debugged in a project: main packages to run, and packages with tests, including the individual test function names. " +
+			"Call this first when you do not already know which package or test to launch. It only reads source and never executes the project.",
+	}, r.listDebugTargets)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "start_debug_session",
 		Annotations: mutating("Start Debug Session"),
 		Description: "Build and launch a Go target under the debugger, stopped before its first instruction so breakpoints can be set first. " +
