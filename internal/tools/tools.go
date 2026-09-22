@@ -7,9 +7,11 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/didenkolab/dbgmcp/internal/backend"
+	"github.com/didenkolab/dbgmcp/internal/backend/dap"
 	"github.com/didenkolab/dbgmcp/internal/backend/delve"
 	"github.com/didenkolab/dbgmcp/internal/model"
 	"github.com/didenkolab/dbgmcp/internal/session"
@@ -39,13 +41,14 @@ func ok[T any](out T) (*mcp.CallToolResult, T, error) { return nil, out, nil }
 // ---------- session lifecycle ----------
 
 type StartIn struct {
-	Mode    string            `json:"mode" jsonschema:"'test' runs go test, 'debug' builds and runs a main package, 'exec' runs an already-built binary, 'attach' takes control of a process that is already running."`
-	Target  string            `json:"target" jsonschema:"Package path for test/debug (for example ./internal/billing or .), or the binary path for exec."`
-	WorkDir string            `json:"work_dir" jsonschema:"Absolute path of the directory to run in. All relative paths and breakpoint files resolve against it."`
-	PID     int               `json:"pid,omitempty" jsonschema:"Process id to attach to. Required for mode=attach and ignored otherwise."`
-	TestRun string            `json:"test_run,omitempty" jsonschema:"Only for mode=test: the -test.run regular expression selecting which tests to run."`
-	Args    []string          `json:"args,omitempty" jsonschema:"Arguments passed to the program itself."`
-	Env     map[string]string `json:"env,omitempty" jsonschema:"Extra environment variables for the debuggee."`
+	Language string            `json:"language,omitempty" jsonschema:"Runtime of the target: 'go' (default) or 'python'. Capabilities differ by runtime, so read describe_backend after starting."`
+	Mode     string            `json:"mode" jsonschema:"'test' runs go test, 'debug' builds and runs a main package, 'exec' runs an already-built binary, 'attach' takes control of a process that is already running."`
+	Target   string            `json:"target" jsonschema:"Package path for test/debug (for example ./internal/billing or .), or the binary path for exec."`
+	WorkDir  string            `json:"work_dir" jsonschema:"Absolute path of the directory to run in. All relative paths and breakpoint files resolve against it."`
+	PID      int               `json:"pid,omitempty" jsonschema:"Process id to attach to. Required for mode=attach and ignored otherwise."`
+	TestRun  string            `json:"test_run,omitempty" jsonschema:"Only for mode=test: the -test.run regular expression selecting which tests to run."`
+	Args     []string          `json:"args,omitempty" jsonschema:"Arguments passed to the program itself."`
+	Env      map[string]string `json:"env,omitempty" jsonschema:"Extra environment variables for the debuggee."`
 	// RecordAncestry is a switch rather than an environment variable the agent
 	// has to know, and it is off by default because recording a stack at every
 	// goroutine creation costs real performance.
@@ -88,7 +91,10 @@ func (r *Registry) startDebugSession(ctx context.Context, _ *mcp.CallToolRequest
 		}
 	}
 
-	b := delve.New()
+	b, err := backendFor(in.Language)
+	if err != nil {
+		return fail[StartOut]("%s", err.Error())
+	}
 	req := model.LaunchRequest{
 		Mode: mode, Target: in.Target, WorkDir: in.WorkDir,
 		TestRun: in.TestRun, Args: in.Args, Env: env, PID: in.PID,
@@ -97,9 +103,15 @@ func (r *Registry) startDebugSession(ctx context.Context, _ *mcp.CallToolRequest
 		return fail[StartOut]("%s", err.Error())
 	}
 
+	optimisations := false
+	if reporter, canReport := b.(interface {
+		OptimisationsDisabled(model.LaunchMode) bool
+	}); canReport {
+		optimisations = reporter.OptimisationsDisabled(mode)
+	}
 	sess := &session.Session{
 		ID: session.NewID(), Backend: b, Request: req, StartedAt: time.Now(),
-		OptimisationsDisabled: b.OptimisationsDisabled(mode),
+		OptimisationsDisabled: optimisations,
 	}
 	r.store.Add(sess)
 
@@ -109,6 +121,22 @@ func (r *Registry) startDebugSession(ctx context.Context, _ *mcp.CallToolRequest
 		Capabilities:          b.Capabilities(),
 		Message:               startMessage(mode),
 	})
+}
+
+// backendFor picks the debugger for a runtime. Go goes through Delve's native
+// API because DAP cannot express what that backend offers; everything else goes
+// through DAP, where one implementation serves several runtimes.
+func backendFor(language string) (backend.Backend, error) {
+	switch strings.ToLower(language) {
+	case "", "go", "golang":
+		return delve.New(), nil
+	default:
+		b, err := dap.New(language)
+		if err != nil {
+			return nil, err
+		}
+		return b, nil
+	}
 }
 
 // startMessage says what is actually true of this session, because the two
@@ -183,7 +211,7 @@ type BackendTool struct {
 
 type DescribeBackendIn struct {
 	SessionID string `json:"session_id,omitempty" jsonschema:"Describe the backend of this session. Omit to describe a backend that has no session yet."`
-	Backend   string `json:"backend,omitempty" jsonschema:"Backend to describe by name, for example 'delve'. Defaults to the only one available."`
+	Backend   string `json:"backend,omitempty" jsonschema:"Runtime to describe: 'go' or 'python'. Defaults to go."`
 }
 
 type DescribeBackendOut struct {
@@ -206,13 +234,11 @@ func (r *Registry) describeBackend(_ context.Context, _ *mcp.CallToolRequest, in
 		}
 		b = sess.Backend
 	} else {
-		switch in.Backend {
-		case "", delve.Name:
-			b = delve.New()
-		default:
-			return fail[DescribeBackendOut](
-				"Unknown backend %q. This server currently provides: %s.", in.Backend, delve.Name)
+		resolved, err := backendFor(in.Backend)
+		if err != nil {
+			return fail[DescribeBackendOut]("%s", err.Error())
 		}
+		b = resolved
 	}
 
 	out := DescribeBackendOut{

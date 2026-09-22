@@ -4,7 +4,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/didenkolab/dbgmcp.svg)](https://pkg.go.dev/github.com/didenkolab/dbgmcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Debug Go programs with breakpoints, from an AI agent, **without an IDE**.
+Debug programs with breakpoints, from an AI agent, **without an IDE**. Go through Delve's native API; Python through DAP.
 
 `dbgmcp` is an MCP server that drives a headless [Delve](https://github.com/go-delve/delve) over
 its native RPC API. It runs anywhere Go runs -- a terminal, a container, CI -- and needs no editor.
@@ -89,9 +89,12 @@ wherever the semantics match, so one agent and one skill work with an IDE and wi
 
 Stated plainly, so nobody mistakes the test suite for more than it is.
 
-- **Go only.** The backend interface and the capability model are built to take a second backend
-  (DAP for Python, Node, Rust; CDP for browsers), but none exists yet, and an abstraction with one
-  implementation is usually wrong. Treat the interface as unproven.
+- **Go and Python.** Go goes through Delve's native API, Python through DAP. JavaScript and Ruby
+  are the same DAP backend plus an adapter profile, and are not written yet.
+- **Python has a smaller capability set, and says so.** No watchpoints, no breakpoints by symbol
+  (debugpy binds them but reports no location, so an agent cannot know where it will stop), no
+  hit counts, no ancestry. `describe_backend` reports each of these, and the conformance suite
+  checks the refusals as well as the support.
 - **Local only.** `test`, `debug`, `exec` and `attach` all work, but only against processes on this
   machine. No remote or containerised target; `PathMapping` is modelled and not exercised.
 - **Attaching on Linux is limited by Yama.** `ptrace_scope` is 1 on most

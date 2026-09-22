@@ -24,6 +24,7 @@ func TestDelveConformance(t *testing.T) {
 		t.Skipf("delve is not installed: %v", err)
 	}
 	dir := fixtureDir(t)
+	main := filepath.Join(dir, "main.go")
 	base := model.LaunchRequest{Mode: model.LaunchDebug, Target: ".", WorkDir: dir}
 
 	withAncestry := base
@@ -37,10 +38,16 @@ func TestDelveConformance(t *testing.T) {
 		Launch:             base,
 		LaunchWithAncestry: withAncestry,
 		CallSymbol:         "main.lineTotal",
+		CallFile:           main,
+		CallLine:           conformance.LineContaining(t, main, "NEVER-REACHED") - 1,
 		IntExpr:            "it.Price",
 		CallExpr:           "lineTotal(it)",
 		LoopSymbol:         "main.Subtotal",
+		LoopFile:           main,
+		LoopLine:           conformance.LineContaining(t, main, "total += lineTotal"),
 		LoopLocal:          "total",
 		SpawnedSymbol:      "main.worker",
+		SpawnedFile:        main,
+		SpawnedLine:        conformance.LineContaining(t, main, "out <- Subtotal"),
 	})
 }

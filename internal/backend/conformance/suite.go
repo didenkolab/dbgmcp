@@ -36,6 +36,12 @@ type Fixture struct {
 	// CallSymbol is a function called more than once, with at least one
 	// argument, resolvable by name without a line number.
 	CallSymbol string
+	// CallFile and CallLine name the same place as CallSymbol, for backends
+	// that cannot resolve a function name. Requiring both is not duplication:
+	// it is what lets this suite run against a backend whose capability set is
+	// smaller, which is the only way to find out whether the abstraction holds.
+	CallFile string
+	CallLine int
 	// IntExpr is an int-valued, settable expression in scope at CallSymbol.
 	IntExpr string
 	// CallExpr calls a function. Used to check how evaluation is guarded.
@@ -43,11 +49,16 @@ type Fixture struct {
 
 	// LoopSymbol is a function containing a local that changes across a loop.
 	LoopSymbol string
+	// LoopFile and LoopLine name a line inside that loop, for the same reason.
+	LoopFile string
+	LoopLine int
 	// LoopLocal is that local's name, in scope at LoopSymbol.
 	LoopLocal string
 
 	// SpawnedSymbol is a function that runs in a unit created by another unit.
 	SpawnedSymbol string
+	SpawnedFile   string
+	SpawnedLine   int
 }
 
 // Run executes the whole suite. Call it from each backend's own test file.
@@ -76,13 +87,25 @@ func start(t *testing.T, f Fixture, req model.LaunchRequest) backend.Backend {
 	return b
 }
 
-// runToSymbol is the "get somewhere interesting" helper every other check
-// needs: break on a function, run, and land there.
-func runToSymbol(t *testing.T, b backend.Backend, symbol string) model.StopEvent {
+// runTo is the "get somewhere interesting" helper every other check needs.
+//
+// It takes both a symbol and a file/line for the same place, and uses whichever
+// the backend can do. An earlier version took only a symbol, which quietly made
+// the whole suite unrunnable against a backend without that capability -- the
+// first thing a second implementation revealed.
+func runTo(t *testing.T, b backend.Backend, symbol, file string, line int) model.StopEvent {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := b.SetBreakpoint(ctx, model.Breakpoint{Location: model.Location{Symbol: symbol}}); err != nil {
-		t.Fatalf("set breakpoint at %s: %v", symbol, err)
+
+	where := model.Location{Symbol: symbol}
+	if !b.Capabilities().BreakpointBySymbol {
+		if file == "" || line <= 0 {
+			t.Skipf("backend cannot break by symbol and the fixture gives no file and line for %s", symbol)
+		}
+		where = model.Location{File: file, Line: line}
+	}
+	if _, err := b.SetBreakpoint(ctx, model.Breakpoint{Location: where}); err != nil {
+		t.Fatalf("set breakpoint at %v: %v", where, err)
 	}
 	if err := b.Resume(ctx); err != nil {
 		t.Fatalf("resume: %v", err)
@@ -95,6 +118,27 @@ func runToSymbol(t *testing.T, b backend.Backend, symbol string) model.StopEvent
 		t.Fatalf("expected to stop at %s, got state=%s reason=%s: %s", symbol, ev.State, ev.Reason, ev.Message)
 	}
 	return ev
+}
+
+// callLocation names the call site in whichever form the backend can accept.
+// Every check that places a breakpoint goes through this rather than reaching
+// for the symbol, because reaching for the symbol is what made the suite
+// unrunnable against a backend without that capability.
+func callLocation(b backend.Backend, f Fixture) model.Location {
+	if b.Capabilities().BreakpointBySymbol {
+		return model.Location{Symbol: f.CallSymbol}
+	}
+	return model.Location{File: f.CallFile, Line: f.CallLine}
+}
+
+func runToCall(t *testing.T, b backend.Backend, f Fixture) model.StopEvent {
+	t.Helper()
+	return runTo(t, b, f.CallSymbol, f.CallFile, f.CallLine)
+}
+
+func runToLoop(t *testing.T, b backend.Backend, f Fixture) model.StopEvent {
+	t.Helper()
+	return runTo(t, b, f.LoopSymbol, f.LoopFile, f.LoopLine)
 }
 
 func requireUnsupported(t *testing.T, err error, capability string) {
@@ -157,7 +201,7 @@ func testHitCounts(t *testing.T, f Fixture) {
 	ctx := context.Background()
 	caps := b.Capabilities()
 
-	runToSymbol(t, b, f.CallSymbol)
+	runToCall(t, b, f)
 	// Go round twice, so a count of one cannot pass by accident.
 	if err := b.Resume(ctx); err != nil {
 		t.Fatalf("resume: %v", err)
@@ -190,7 +234,7 @@ func testHitCounts(t *testing.T, f Fixture) {
 func testStepping(t *testing.T, f Fixture) {
 	b := start(t, f, f.Launch)
 	ctx := context.Background()
-	before := runToSymbol(t, b, f.CallSymbol)
+	before := runToCall(t, b, f)
 
 	after, err := b.Step(ctx, model.StepOver)
 	if err != nil {
@@ -217,7 +261,7 @@ func testStepping(t *testing.T, f Fixture) {
 func testSetVariable(t *testing.T, f Fixture) {
 	b := start(t, f, f.Launch)
 	ctx := context.Background()
-	runToSymbol(t, b, f.CallSymbol)
+	runToCall(t, b, f)
 	caps := b.Capabilities()
 
 	err := b.SetVariable(ctx, 0, f.IntExpr, "7")
@@ -243,7 +287,7 @@ func testWatchpoints(t *testing.T, f Fixture) {
 	ctx := context.Background()
 	caps := b.Capabilities()
 
-	runToSymbol(t, b, f.LoopSymbol)
+	runToLoop(t, b, f)
 	// A watchpoint needs the variable to exist already. Stopping at a function's
 	// entry is before its locals are declared, so step until the name resolves
 	// -- which is what an agent has to do too, and why the backend's refusal
@@ -323,7 +367,7 @@ func testStepWithWatchpoint(t *testing.T, f Fixture) {
 		t.Skip("backend declares no watchpoints")
 	}
 
-	runToSymbol(t, b, f.LoopSymbol)
+	runToLoop(t, b, f)
 	bringIntoScope(t, b, f.LoopLocal)
 	if _, err := b.SetWatchpoint(ctx, 0, f.LoopLocal, model.WatchWrite); err != nil {
 		t.Fatalf("set watchpoint: %v", err)
@@ -359,7 +403,7 @@ func testTrace(t *testing.T, f Fixture) {
 	caps := b.Capabilities()
 
 	_, err := b.SetBreakpoint(ctx, model.Breakpoint{
-		Location: model.Location{Symbol: f.CallSymbol},
+		Location: callLocation(b, f),
 		Suspend:  model.SuspendNone,
 		Record:   []string{f.IntExpr},
 	})
@@ -394,7 +438,7 @@ func testTrace(t *testing.T, f Fixture) {
 	// a race would be told the observation was free of observer effect.
 	fresh := start(t, f, f.Launch)
 	tr, err := fresh.Trace(ctx, []model.Probe{{
-		Location: model.Location{Symbol: f.CallSymbol},
+		Location: callLocation(fresh, f),
 		Record:   []string{f.IntExpr},
 		MaxHits:  1,
 	}}, 60*time.Second)
@@ -417,7 +461,7 @@ func testEvalGuard(t *testing.T, f Fixture) {
 	}
 	b := start(t, f, f.Launch)
 	ctx := context.Background()
-	runToSymbol(t, b, f.CallSymbol)
+	runToCall(t, b, f)
 
 	_, err := b.Evaluate(ctx, 0, f.CallExpr, model.ValueBudget{})
 	switch b.Capabilities().EvalCallsFunctions {
@@ -448,7 +492,7 @@ func testAncestry(t *testing.T, f Fixture) {
 	b := start(t, f, req)
 	ctx := context.Background()
 
-	runToSymbol(t, b, f.SpawnedSymbol)
+	runTo(t, b, f.SpawnedSymbol, f.SpawnedFile, f.SpawnedLine)
 
 	anc, err := b.Ancestors(ctx, "", 16)
 	if !caps.Ancestry {

@@ -10,6 +10,8 @@ First public release. Everything below is new.
 ### Debugging
 
 - Go programs debugged headlessly through Delve's native RPC API, with no IDE.
+- Python through the Debug Adapter Protocol and debugpy, behind the same tools. The
+  backend reports a genuinely smaller capability set rather than pretending parity.
 - Launch modes `test`, `debug` and `exec`; `attach` takes control of a process
   that is already running and leaves it running on detach.
 - Breakpoints by symbol or by file and line, with conditions and hit-count
