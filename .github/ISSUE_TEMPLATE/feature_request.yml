@@ -1,0 +1,26 @@
+name: Feature request
+description: Something an agent cannot currently ask
+labels: [enhancement]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: What question should an agent be able to answer, that it cannot now?
+      description: |
+        This project is built around answering questions rather than exposing
+        debugger primitives, so the useful framing is the question ("why did this
+        value end up wrong") rather than the mechanism ("expose data breakpoints").
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How would you do it with the tools that exist, and what does that cost?
+      description: Number of calls, or why it is not possible at all.
+    validations:
+      required: true
+  - type: input
+    id: backends
+    attributes:
+      label: Which backends could support it?
+      description: If only some, it belongs in the capability model rather than being assumed.

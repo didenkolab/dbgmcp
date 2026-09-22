@@ -1,0 +1,46 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Built on both, because the only way to know the binary works on a platform
+    # is to have run the suite there.
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: macos-14
+            goos: darwin
+            goarch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Install Delve
+        run: go install github.com/go-delve/delve/cmd/dlv@v1.27.2
+      - name: Test
+        run: go test ./... -count=1 -timeout 20m
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          out="dbgmcp_${GOOS}_${GOARCH}"
+          go build -trimpath -ldflags "-s -w" -o "$out" ./cmd/dbgmcp
+          tar czf "$out.tar.gz" "$out"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dbgmcp_*.tar.gz
+          fail_on_unmatched_files: true

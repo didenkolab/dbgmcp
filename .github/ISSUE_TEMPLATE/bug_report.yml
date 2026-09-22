@@ -1,0 +1,36 @@
+name: Bug report
+description: Something the debugger got wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most useful bug report here is one that names a program and the calls
+        that were made against it. "It did not stop" is hard to act on; "it did
+        not stop at `pkg.Func` in this ten-line program" is a fix.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: The smallest program and tool calls that reproduce it
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `dbgmcp doctor`
+      description: Reports the platform and the Delve actually in use, which is usually where the difference is.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Output of `describe_backend`, if the report is about a capability
+      render: json

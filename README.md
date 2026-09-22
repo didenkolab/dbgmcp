@@ -1,5 +1,9 @@
 # dbgmcp
 
+[![test](https://github.com/didenkolab/dbgmcp/actions/workflows/test.yml/badge.svg)](https://github.com/didenkolab/dbgmcp/actions/workflows/test.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/didenkolab/dbgmcp.svg)](https://pkg.go.dev/github.com/didenkolab/dbgmcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Debug Go programs with breakpoints, from an AI agent, **without an IDE**.
 
 `dbgmcp` is an MCP server that drives a headless [Delve](https://github.com/go-delve/delve) over
@@ -128,3 +132,13 @@ dbgmcp doctor
 
 The live tests skip when Delve is absent rather than failing. There are no mocked debuggers in
 this repository on purpose: a mocked debugger proves nothing about whether this can debug.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Two rules are load-bearing rather than
+stylistic: no mocked debuggers, and a declared capability must be exercised by
+the conformance suite.
+
+## License
+
+[MIT](LICENSE).
