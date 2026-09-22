@@ -145,6 +145,15 @@ func TestAbsenceIsClassifiedByTheBackendNotGuessedHere(t *testing.T) {
 	}
 }
 
+func TestOneReadingBeforeAZeroIsNotAPattern(t *testing.T) {
+	// "never been zero in 1 hit" is a pair, not a trend, and reporting it is the
+	// noise that teaches a reader to skip findings entirely.
+	got := Analyse(transcriptOf("msd", "1", "0", "31", "20"), nil)
+	if f := has(got, model.FindingFirstZero); f != nil {
+		t.Errorf("reported a zero with one reading behind it: %s", f.Detail)
+	}
+}
+
 func TestIgnoresAValueThatStartedAtZero(t *testing.T) {
 	// An accumulator starting at zero is not news.
 	got := Analyse(transcriptOf("total", "0", "0", "30", "110"), nil)

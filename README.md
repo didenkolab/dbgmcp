@@ -30,6 +30,8 @@ Register it with your agent as an MCP server over stdio, command `dbgmcp`.
 
 ## Use
 
+### From an agent
+
 ```
 start_debug_session -> set_breakpoint -> resume_execution -> wait_for_pause -> evaluate_expression
 ```
@@ -76,6 +78,22 @@ The saving is **round trips, not observer effect**, and the result says which yo
 debuggee at every hit and resumes it itself, so the transcript reports `mode: "auto_continue"` and
 `perturbs_timing: true`. Genuinely non-stop tracing is `mode: "buffered"`, and it is not available
 here. An agent chasing a race reads that from the response rather than from this paragraph.
+
+### From a pipeline
+
+A failing test in CI has no conversation to hold, so tracing is also a command:
+
+```bash
+dbgmcp trace -dir . -mode test -target ./internal/billing \
+  -test TestSubtotal \
+  -probe internal/billing/cart.go:26=total,i \
+  -format md -out trace.md
+```
+
+It re-runs the target under the debugger, records the expressions, reads the transcript and writes a
+report: what was noticed first, the values it rests on next, the full table last. It exits zero even
+when it notices something -- the failing test fails the build, not the diagnostic, because a
+diagnostic that can break a pipeline stops being run.
 
 **It reads the transcript for you.** `trace_execution` comes back with `findings`: a value that had
 been climbing and reversed, one that had always been present and arrived empty, one that changed

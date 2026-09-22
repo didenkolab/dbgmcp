@@ -203,16 +203,21 @@ func (s series) firstAbsent() (model.Finding, bool) {
 // manufactured by the rule itself rather than found in the data.
 func (s series) firstZero() (model.Finding, bool) {
 	nums, ok := s.numbers()
-	if !ok || len(nums) < 2 || nums[0] == 0 {
+	if !ok || len(nums) < minSamples+1 || nums[0] == 0 {
 		return model.Finding{}, false
 	}
 	for i := 1; i < len(nums); i++ {
 		if nums[i] != 0 {
 			continue
 		}
+		// One non-zero reading before a zero is not a pattern, it is a pair.
+		// Reporting it produces noise that teaches a reader to skip findings.
+		if i < minSamples {
+			return model.Finding{}, false
+		}
 		f := s.at(i)
 		f.Kind = model.FindingFirstZero
-		f.Detail = fmt.Sprintf("%s had never been zero in %d hits and then was.", s.expression, i)
+		f.Detail = fmt.Sprintf("%s was non-zero for %d hits and then became zero.", s.expression, i)
 		f.Evidence = s.evidenceAround(i)
 		return f, true
 	}

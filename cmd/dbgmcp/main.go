@@ -26,6 +26,11 @@ func main() {
 		case "doctor":
 			doctor()
 			return
+		case "trace":
+			os.Exit(traceCommand(os.Args[2:]))
+		case "help", "--help", "-h":
+			usage()
+			return
 		}
 	}
 
@@ -43,6 +48,18 @@ func main() {
 		stopAll(store)
 		os.Exit(1)
 	}
+}
+
+func usage() {
+	fmt.Print(`dbgmcp - debug programs with breakpoints, from an AI agent or a pipeline.
+
+  dbgmcp              serve MCP over stdio (how an agent uses it)
+  dbgmcp trace ...    record expressions while a target runs, and write a report
+  dbgmcp doctor       report the platform and the debugger in use
+  dbgmcp version
+
+Run "dbgmcp trace -h" for the tracing options.
+`)
 }
 
 func stopAll(store *session.Store) {
