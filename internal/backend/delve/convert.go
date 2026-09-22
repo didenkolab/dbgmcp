@@ -34,11 +34,13 @@ func loadConfig(b model.ValueBudget) api.LoadConfig {
 // reads here it can immediately evaluate.
 func flattenVariable(v api.Variable, path string, budget model.ValueBudget, out *[]model.Variable) {
 	budget = budget.WithDefaults()
+	value, presence := presentValue(v), presenceOf(v)
 	*out = append(*out, model.Variable{
 		Name:      path,
 		Type:      v.Type,
 		Kind:      v.Kind.String(),
-		Value:     presentValue(v),
+		Value:     value,
+		Presence:  presence,
 		Truncated: isTruncated(v),
 	})
 
@@ -78,6 +80,21 @@ func isTruncated(v api.Variable) bool {
 		return true
 	}
 	return v.Kind.String() == "string" && v.Len > int64(len(v.Value))
+}
+
+// presenceOf separates "there is nothing here" from "I could not read this".
+// Both used to render as an empty string, and both were misread as a result.
+func presenceOf(v api.Variable) model.Presence {
+	if v.Unreadable != "" {
+		return model.PresentUnreadable
+	}
+	switch v.Kind.String() {
+	case "ptr", "interface", "chan", "func", "map", "slice", "unsafe.Pointer":
+		if len(v.Children) == 0 || (len(v.Children) == 1 && v.Children[0].Addr == 0 && v.Children[0].Kind.String() == "invalid") {
+			return model.PresentNil
+		}
+	}
+	return model.PresentValue
 }
 
 // presentValue gives a value a readable one-line form. Delve leaves Value empty

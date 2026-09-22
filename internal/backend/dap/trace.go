@@ -94,10 +94,11 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 			continue
 		}
 		counts[index]++
+		present, absent := splitByPresence(values)
 		out.Hits = append(out.Hits, model.TraceHit{
 			Probe: index, Hit: counts[index],
 			File: probes[index].Location.File, Line: probes[index].Location.Line,
-			Values: values,
+			Values: present, Absent: absent,
 		})
 	}
 	for i, n := range counts {
@@ -113,6 +114,23 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 		out.Message += " Some probes never fired, so an empty transcript there means a misplaced probe rather than no data."
 	}
 	return out, nil
+}
+
+// splitByPresence sorts recorded values into the ones that are there and the
+// ones that are not, so a comparison across runs cannot read "None" as data.
+func splitByPresence(values map[string]string) (present, absent map[string]string) {
+	present = map[string]string{}
+	for expr, value := range values {
+		if p := presenceOfText(value); p != model.PresentValue {
+			if absent == nil {
+				absent = map[string]string{}
+			}
+			absent[expr] = string(p)
+			continue
+		}
+		present[expr] = value
+	}
+	return present, absent
 }
 
 // parseTraceLine reads back a line this server's own logpoint template produced.

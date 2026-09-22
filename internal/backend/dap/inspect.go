@@ -154,9 +154,25 @@ func (b *Backend) collect(ctx context.Context, cl *client, ref int, prefix strin
 		}
 		*out = append(*out, model.Variable{
 			Name: path, Type: v.Type, Value: value, Truncated: truncated,
+			Presence: presenceOfText(value),
 		})
 		b.collect(ctx, cl, v.VariablesReference, path, budget, depth+1, out)
 	}
+}
+
+// presenceOfText classifies a rendered value.
+//
+// DAP carries no presence flag: an adapter reports "None" or "null" as the text
+// of the value, so the distinction has to be recovered here. Doing it once, in
+// one place, is what stops every consumer from inventing its own guess.
+func presenceOfText(value string) model.Presence {
+	switch strings.TrimSpace(value) {
+	case "None", "null", "nil", "undefined", "<nil>":
+		return model.PresentNil
+	case "":
+		return model.PresentUnreadable
+	}
+	return model.PresentValue
 }
 
 func (b *Backend) Evaluate(ctx context.Context, frameIndex int, expr string, budget model.ValueBudget) (model.Variable, error) {
@@ -179,7 +195,8 @@ func (b *Backend) Evaluate(ctx context.Context, frameIndex int, expr string, bud
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return model.Variable{}, err
 	}
-	return model.Variable{Name: expr, Type: resp.Type, Value: resp.Result}, nil
+	return model.Variable{Name: expr, Type: resp.Type, Value: resp.Result,
+		Presence: presenceOfText(resp.Result)}, nil
 }
 
 func (b *Backend) SetVariable(ctx context.Context, frameIndex int, name, value string) error {

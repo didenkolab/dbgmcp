@@ -47,13 +47,49 @@ func (b ValueBudget) WithDefaults() ValueBudget {
 //
 // The shape also happens to be expressible as a JSON Schema, which a recursive
 // type is not.
+// Presence says whether a value is there at all, separately from what it reads
+// as.
+//
+// This exists because a bare string cannot carry the difference. "nil", "" and
+// "the debugger could not read this" all rendered identically, which produced
+// two real defects: a pointer's address was passed through as if it were data,
+// and a nil error displayed as nothing at all -- in Go, the difference between
+// "no error" and "I do not know". A comparison across runs would inherit the
+// same confusion and report divergences that are not there.
+type Presence string
+
+const (
+	// PresentValue means Value holds a real rendering of a real value.
+	PresentValue Presence = "value"
+	// PresentNil means the value is genuinely absent: a nil pointer, a None, an
+	// undefined. Value says which spelling.
+	PresentNil Presence = "nil"
+	// PresentUnreadable means the debugger could not read it, and Value says
+	// why. This is not the same as absent, and treating it as absent is how a
+	// reader concludes something false.
+	PresentUnreadable Presence = "unreadable"
+	// PresentOutOfScope means the expression named nothing here.
+	PresentOutOfScope Presence = "out_of_scope"
+)
+
+// Comparable reports whether two readings of this value can be meaningfully
+// compared. An unreadable value is not equal or unequal to anything.
+func (p Presence) Comparable() bool {
+	return p == PresentValue || p == PresentNil
+}
+
 type Variable struct {
 	// Name is the full path from the frame's root, usable verbatim as an
 	// expression.
-	Name  string `json:"name"`
-	Type  string `json:"type,omitempty"`
+	Name string `json:"name"`
+	Type string `json:"type,omitempty"`
+	// Value is the rendering. Read Presence before drawing a conclusion from it.
 	Value string `json:"value"`
-	Kind  string `json:"kind,omitempty"`
+	// Presence distinguishes a real value from an absent one and from one the
+	// debugger could not read. Empty means PresentValue, so existing readers
+	// are not broken by its arrival.
+	Presence Presence `json:"presence,omitempty"`
+	Kind     string   `json:"kind,omitempty"`
 	// Truncated says a budget cut this value short, so the agent knows to ask
 	// for more rather than concluding the data is not there.
 	Truncated bool `json:"truncated,omitempty"`

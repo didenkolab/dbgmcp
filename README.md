@@ -59,6 +59,10 @@ number grows.
 `it.Price` is both the answer and the next call's input. A nested tree would cost more tokens and
 be less useful.
 
+Each value also carries `presence`, which separates a real value from a `nil` and from one the
+debugger could not read. All three used to render as the same string, which produced two defects and
+would have produced false divergences the moment two runs were compared.
+
 **Capabilities are data.** `describe_backend` reports what this debugger can actually do --
 watchpoints, non-suspending tracing, per-unit hit counts, calling functions during evaluation.
 Plan against it instead of discovering the limits by failing into them.
@@ -114,6 +118,9 @@ Stated plainly, so nobody mistakes the test suite for more than it is.
   asserted by a test, because the difference is one boolean deep inside teardown. Its output still
   goes wherever it was already going, so `get_session_output` has nothing to show for an attached
   session.
+- **Absence is classified by the backend, not guessed from the text.** A transcript reports values
+  it has under `values` and the rest under `absent`, with the reason. A gap is never read as a zero,
+  and a counter honestly reaching zero is not reported as having gone missing.
 - **`findings` sees shape, not correctness.** It notices a trend that broke, a value that became
   empty, one that froze, a step out of line with the rest. It cannot tell a wrong number from a
   right one, because nothing in a transcript says what the answer should have been.

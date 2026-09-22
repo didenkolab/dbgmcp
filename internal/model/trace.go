@@ -23,8 +23,18 @@ type TraceHit struct {
 	Function string `json:"function,omitempty"`
 	UnitID   string `json:"unit_id,omitempty"`
 	// Values keys each recorded expression by the expression itself, so the
-	// transcript reads without having to consult the request.
+	// transcript reads without having to consult the request. Only expressions
+	// that had a real value appear here.
 	Values map[string]string `json:"values"`
+	// Absent names the expressions that had no value at this hit, and why --
+	// "nil", "unreadable", "out_of_scope".
+	//
+	// Kept separate from Values rather than folded into it so the common case
+	// stays one short string per expression: a transcript is read far more
+	// often than absence occurs, and every recorded value would otherwise cost
+	// an object. Without the distinction, "" and "nil" and "could not read" are
+	// one string, and comparing two runs invents divergences.
+	Absent map[string]string `json:"absent,omitempty"`
 }
 
 type TraceStatus string

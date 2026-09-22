@@ -30,9 +30,16 @@ type FindingKind string
 const (
 	// FindingMonotonicBreak: a value that had been moving one way reversed.
 	FindingMonotonicBreak FindingKind = "monotonic_break"
-	// FindingFirstEmpty: a value that had always been present arrived empty,
-	// nil or zero. In most languages that is where a chain of assumptions ends.
-	FindingFirstEmpty FindingKind = "first_empty"
+	// FindingFirstAbsent: an expression that had always had a value stopped
+	// having one -- nil, None, undefined. In most languages that is where a
+	// chain of assumptions ends.
+	FindingFirstAbsent FindingKind = "first_absent"
+	// FindingFirstZero: a number that had never been zero became zero.
+	//
+	// Kept apart from FindingFirstAbsent deliberately. Folding them together
+	// meant a counter honestly reaching zero was reported as having gone
+	// missing, which is a false alarm manufactured by the rule itself.
+	FindingFirstZero FindingKind = "first_zero"
 	// FindingTypeChanged: an expression reported a different type than before.
 	// Rare and usually deliberate in Go; common and usually a mistake in
 	// Python and JavaScript, which is why it is worth saying out loud.

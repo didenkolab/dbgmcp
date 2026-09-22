@@ -192,6 +192,16 @@ func (b *Backend) collectHits(state *api.DebuggerState, probes []model.Probe, by
 				if j < len(exprs) {
 					name = exprs[j]
 				}
+				// An absent or unreadable value is recorded as such rather than
+				// as a string that happens to look empty, so a later comparison
+				// cannot mistake one for the other.
+				if presence := presenceOf(v); presence != model.PresentValue {
+					if hit.Absent == nil {
+						hit.Absent = map[string]string{}
+					}
+					hit.Absent[name] = string(presence)
+					continue
+				}
 				hit.Values[name] = presentValue(v)
 			}
 		}

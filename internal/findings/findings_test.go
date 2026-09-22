@@ -72,34 +72,84 @@ func TestSaysNothingAboutAValueThatSimplyVaries(t *testing.T) {
 	}
 }
 
-func TestReportsTheFirstTimeAValueBecameEmpty(t *testing.T) {
-	got := Analyse(transcriptOf("user", "alice", "bob", "carol", "None"), nil)
+// transcriptWithGap records real values and then one the debugger reported as
+// absent, which is how a backend now reports nil rather than as a string.
+func transcriptWithGap(expr, reason string, values ...string) model.Transcript {
+	t := transcriptOf(expr, values...)
+	t.Hits = append(t.Hits, model.TraceHit{
+		Probe: 0, Hit: len(values) + 1, File: "cart.go", Line: 26,
+		Values: map[string]string{},
+		Absent: map[string]string{expr: reason},
+	})
+	return t
+}
 
-	f := has(got, model.FindingFirstEmpty)
+func TestReportsTheFirstTimeAValueWentMissing(t *testing.T) {
+	got := Analyse(transcriptWithGap("user", "nil", "alice", "bob", "carol"), nil)
+
+	f := has(got, model.FindingFirstAbsent)
 	if f == nil {
-		t.Fatalf("no first-empty reported; got %v", kinds(got))
+		t.Fatalf("no first-absent reported; got %v", kinds(got))
 	}
 	if f.Hit != 4 {
 		t.Errorf("reported hit %d, expected 4", f.Hit)
 	}
+	if !strings.Contains(f.Detail, "nil") {
+		t.Errorf("the detail does not say what kind of absence it was: %s", f.Detail)
+	}
 }
 
-func TestUnderstandsHowEachRuntimeSpellsAbsence(t *testing.T) {
-	// A rule that knew only Go's spelling would be useless the moment a second
-	// backend arrived, which is the mistake this package exists to avoid.
-	for _, empty := range []string{"nil", "None", "null", "undefined", "", "0", "[]"} {
-		got := Analyse(transcriptOf("v", "7", "8", empty), nil)
-		if has(got, model.FindingFirstEmpty) == nil {
-			t.Errorf("%q was not recognised as absence", empty)
+func TestAGapIsNotTheSameAsUnreadable(t *testing.T) {
+	// "the debugger could not read this" is not "there is nothing here", and a
+	// reader told the wrong one draws the wrong conclusion.
+	got := Analyse(transcriptWithGap("cfg", "unreadable", "a", "b", "c"), nil)
+	f := has(got, model.FindingFirstAbsent)
+	if f == nil || !strings.Contains(f.Detail, "unreadable") {
+		t.Fatalf("the reason for the gap was lost: %+v", f)
+	}
+}
+
+func TestACounterReachingZeroIsAValueNotAGap(t *testing.T) {
+	// This is the false alarm the old rule manufactured: zero spelled the same
+	// as nil, so an honest countdown was reported as having gone missing.
+	got := Analyse(transcriptOf("remaining", "3", "2", "1", "0"), nil)
+
+	if has(got, model.FindingFirstAbsent) != nil {
+		t.Errorf("read a zero as an absent value: %v", kinds(got))
+	}
+	if has(got, model.FindingFirstZero) == nil {
+		t.Errorf("a counter reaching zero for the first time was not reported: %v", kinds(got))
+	}
+}
+
+func TestNoTrendIsInventedAcrossAGap(t *testing.T) {
+	// A missing value must not be read as a zero, or the series grows a cliff
+	// that never happened.
+	got := Analyse(transcriptWithGap("total", "nil", "10", "20", "30", "40"), nil)
+	for _, f := range got {
+		if f.Kind == model.FindingStepOutlier || f.Kind == model.FindingMonotonicBreak {
+			t.Errorf("invented %s across a gap: %s", f.Kind, f.Detail)
 		}
 	}
 }
 
-func TestIgnoresAValueThatStartedEmpty(t *testing.T) {
+func TestAbsenceIsClassifiedByTheBackendNotGuessedHere(t *testing.T) {
+	// Each runtime spells absence differently, and this package used to guess
+	// from the text -- which is how "0" ended up counting as missing. The
+	// backends classify it now, and every spelling arrives as one fact.
+	for _, reason := range []string{"nil", "unreadable", "out_of_scope"} {
+		got := Analyse(transcriptWithGap("v", reason, "7", "8"), nil)
+		if has(got, model.FindingFirstAbsent) == nil {
+			t.Errorf("a gap reported as %q was not noticed", reason)
+		}
+	}
+}
+
+func TestIgnoresAValueThatStartedAtZero(t *testing.T) {
 	// An accumulator starting at zero is not news.
 	got := Analyse(transcriptOf("total", "0", "0", "30", "110"), nil)
-	if has(got, model.FindingFirstEmpty) != nil {
-		t.Errorf("reported a value that was empty from the start: %v", kinds(got))
+	if has(got, model.FindingFirstZero) != nil {
+		t.Errorf("reported a value that was zero from the start: %v", kinds(got))
 	}
 }
 

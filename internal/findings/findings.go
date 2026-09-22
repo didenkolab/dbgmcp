@@ -53,9 +53,15 @@ func matchesLocation(text string, loc model.Location) bool {
 type sample struct {
 	hit   int
 	value string
-	file  string
-	line  int
+	// absent is the reason there was no value, empty when there was one. The
+	// rules read this rather than guessing from the text, because "0" and "nil"
+	// and "could not read" are three different facts that used to be one string.
+	absent string
+	file   string
+	line   int
 }
+
+func (s sample) present() bool { return s.absent == "" }
 
 // series is every value one expression took at one probe in one execution unit.
 //
@@ -78,16 +84,24 @@ type series struct {
 func seriesOf(t model.Transcript) []series {
 	index := map[string]*series{}
 	var order []string
+	add := func(hit model.TraceHit, expr, value, absent string) {
+		key := strconv.Itoa(hit.Probe) + "\x00" + hit.UnitID + "\x00" + expr
+		s, seen := index[key]
+		if !seen {
+			s = &series{probe: hit.Probe, unit: hit.UnitID, expression: expr}
+			index[key] = s
+			order = append(order, key)
+		}
+		s.samples = append(s.samples, sample{
+			hit: hit.Hit, value: value, absent: absent, file: hit.File, line: hit.Line,
+		})
+	}
 	for _, hit := range t.Hits {
 		for expr, value := range hit.Values {
-			key := strconv.Itoa(hit.Probe) + "\x00" + hit.UnitID + "\x00" + expr
-			s, seen := index[key]
-			if !seen {
-				s = &series{probe: hit.Probe, unit: hit.UnitID, expression: expr}
-				index[key] = s
-				order = append(order, key)
-			}
-			s.samples = append(s.samples, sample{hit: hit.Hit, value: value, file: hit.File, line: hit.Line})
+			add(hit, expr, value, "")
+		}
+		for expr, reason := range hit.Absent {
+			add(hit, expr, reason, reason)
 		}
 	}
 	out := make([]series, 0, len(order))
@@ -102,7 +116,10 @@ func (s series) analyse() []model.Finding {
 	if f, found := s.monotonicBreak(); found {
 		out = append(out, f)
 	}
-	if f, found := s.firstEmpty(); found {
+	if f, found := s.firstAbsent(); found {
+		out = append(out, f)
+	}
+	if f, found := s.firstZero(); found {
 		out = append(out, f)
 	}
 	if f, found := s.froze(); found {
@@ -159,35 +176,47 @@ func (s series) monotonicBreak() (model.Finding, bool) {
 	return model.Finding{}, false
 }
 
-// firstEmpty reports the first time a value that had always been present was
-// not.
-func (s series) firstEmpty() (model.Finding, bool) {
-	if len(s.samples) < 2 || isEmptyValue(s.samples[0].value) {
+// firstAbsent reports the first time an expression that had a value stopped
+// having one.
+func (s series) firstAbsent() (model.Finding, bool) {
+	if len(s.samples) < 2 || !s.samples[0].present() {
 		return model.Finding{}, false
 	}
 	for i := 1; i < len(s.samples); i++ {
-		if !isEmptyValue(s.samples[i].value) {
+		if s.samples[i].present() {
 			continue
 		}
 		f := s.at(i)
-		f.Kind = model.FindingFirstEmpty
-		f.Detail = fmt.Sprintf("%s was %q for the first %d hits and then became %q.",
-			s.expression, s.samples[i-1].value, i, s.samples[i].value)
+		f.Kind = model.FindingFirstAbsent
+		f.Detail = fmt.Sprintf("%s had a value for the first %d hits and then had none (%s).",
+			s.expression, i, s.samples[i].absent)
 		f.Evidence = s.evidenceAround(i)
 		return f, true
 	}
 	return model.Finding{}, false
 }
 
-// isEmptyValue covers the several ways runtimes spell absence. A rule that
-// understood only Go's would be useless the moment a second backend arrived,
-// which is the mistake this package exists to avoid.
-func isEmptyValue(v string) bool {
-	switch strings.TrimSpace(strings.ToLower(v)) {
-	case "", "nil", "none", "null", "undefined", "0", "\"\"", "''", "[]", "{}", "false":
-		return true
+// firstZero reports a number that had never been zero becoming zero.
+//
+// Kept apart from absence on purpose. Folding the two together meant a counter
+// honestly reaching zero was reported as having gone missing -- a false alarm
+// manufactured by the rule itself rather than found in the data.
+func (s series) firstZero() (model.Finding, bool) {
+	nums, ok := s.numbers()
+	if !ok || len(nums) < 2 || nums[0] == 0 {
+		return model.Finding{}, false
 	}
-	return false
+	for i := 1; i < len(nums); i++ {
+		if nums[i] != 0 {
+			continue
+		}
+		f := s.at(i)
+		f.Kind = model.FindingFirstZero
+		f.Detail = fmt.Sprintf("%s had never been zero in %d hits and then was.", s.expression, i)
+		f.Evidence = s.evidenceAround(i)
+		return f, true
+	}
+	return model.Finding{}, false
 }
 
 // froze reports a value that changed at every hit and then stopped.
@@ -197,6 +226,9 @@ func (s series) froze() (model.Finding, bool) {
 	}
 	// Find where the last run of identical values begins.
 	last := len(s.samples) - 1
+	if !s.samples[last].present() {
+		return model.Finding{}, false
+	}
 	start := last
 	for start > 0 && s.samples[start-1].value == s.samples[last].value {
 		start--
@@ -246,9 +278,14 @@ func (s series) stepOutlier() (model.Finding, bool) {
 	return model.Finding{}, false
 }
 
+// numbers refuses to interpret a series containing a gap. A missing value is
+// not a zero, and quietly treating it as one is how a trend gets invented.
 func (s series) numbers() ([]float64, bool) {
 	out := make([]float64, 0, len(s.samples))
 	for _, sm := range s.samples {
+		if !sm.present() {
+			return nil, false
+		}
 		n, err := strconv.ParseFloat(strings.TrimSpace(sm.value), 64)
 		if err != nil {
 			return nil, false
