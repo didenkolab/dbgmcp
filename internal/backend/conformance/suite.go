@@ -58,7 +58,7 @@ func Run(t *testing.T, f Fixture) {
 	t.Run("stepping", func(t *testing.T) { testStepping(t, f) })
 	t.Run("set variable", func(t *testing.T) { testSetVariable(t, f) })
 	t.Run("watchpoints", func(t *testing.T) { testWatchpoints(t, f) })
-	t.Run("non-suspending trace", func(t *testing.T) { testTrace(t, f) })
+	t.Run("trace mode", func(t *testing.T) { testTrace(t, f) })
 	t.Run("evaluation guard", func(t *testing.T) { testEvalGuard(t, f) })
 	t.Run("ancestry", func(t *testing.T) { testAncestry(t, f) })
 }
