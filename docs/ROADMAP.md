@@ -13,66 +13,97 @@ Working today, verified by tests that launch real processes:
 - **Capabilities as data**, backed by a conformance suite that fails on a claim it cannot verify.
 - 27 tools. Acceptance test finds a planted bug in 6 MCP calls, and the count is asserted.
 
-## The competitive position, stated honestly
+## What this is for
 
-The IDE-less agentic debugger space is occupied and not by amateurs.
-[mcp-debugger](https://github.com/debugmcp/mcp-debugger) covers seven or eight languages over DAP
-and runs anywhere Node does. [Microsoft's DebugMCP](https://github.com/microsoft/DebugMCP) drives
-VS Code's debugger from an embedded MCP server.
-[Govinda-Fichtner/debugger-mcp](https://github.com/Govinda-Fichtner/debugger-mcp) does the same in
-Rust. A value-history tool of the same shape as `explain_value` already exists as
-`debug_trace_value` in qwen-dap-mcp.
+An internal platform for runtime debugging, wired into how products are built and
+checked — not a product sold on feature count. That changes the target.
 
-**Breadth is taken.** Racing eight languages against projects that already have them, with zero
-users and Microsoft in the field, is a race to arrive second.
+**Coverage is a requirement, not a vanity metric.** The estate is JavaScript/TypeScript,
+Go and Python, with Ruby being phased out. Go is roughly a third of it. A Go-only
+debugger serves a third of the products, which is not a platform.
 
-What is not taken:
+One DAP backend covers Python, JavaScript/TypeScript and Ruby — Ruby arrives free
+through `rdbg` even though it is on the way out. Three backends then cover the whole
+estate: Delve (done), DAP, and later CDP for the browser.
 
-1. **Depth below DAP.** Every competitor speaks DAP, so every competitor inherits its ceiling.
-   Per-goroutine hit counts, watchpoints, execution-unit ancestry and expressions evaluated on the
-   breakpoint side do not cross that protocol. They are the reason this one speaks Delve directly.
-2. **Machine-checked honesty.** Others document their limits in prose. Here a capability is a value
-   the agent reads, and a conformance suite fails the build when a claim is not backed. That suite
-   has already caught one false claim of ours, which is the argument for it.
-3. **Round trips as a measured cost.** The acceptance test asserts the call count, so a change that
-   makes the tools harder to use fails rather than quietly degrades.
+**The integration layer is the part that does not exist elsewhere.** Debugger
+primitives are commodity: [mcp-debugger](https://github.com/debugmcp/mcp-debugger)
+covers eight languages over DAP, and
+[Microsoft's DebugMCP](https://github.com/microsoft/DebugMCP) drives VS Code's. What
+none of them do is "a test failed in CI, so the value trace is attached to the pull
+request" or "QA saw it once, and handed over evidence rather than repro steps". That
+is where the work is.
 
-So the bet is: **a debugger that answers questions, on one runtime, better than a protocol bridge
-answers them on eight.**
+What carries over from the product framing, because it matters more for an internal
+tool rather than less:
 
----
+- **Depth below DAP.** Per-goroutine hit counts, expressions evaluated on the
+  breakpoint side and execution-unit ancestry do not cross that protocol. Delve stays
+  on its native API; the DAP backend declares the reduced capability honestly.
+- **Machine-checked honesty.** A capability declared and not exercised is worse than
+  none, because the agent trusts it. An internal platform that lies costs more than a
+  product that does, because nobody shops elsewhere.
+- **Round trips as a measured cost.** Measured against mcp-debugger on the same task:
+  27 calls and 9.1 KB versus 3 calls and 1.6 KB. On a working context of 40K tokens
+  that is roughly $5 against $0.60 per investigation.
 
-## Near term — make the bet visible
+## The four pains, and what answers each
 
-### 1. `findings` — the server reads the transcript
+| Pain | What answers it | Status |
+|---|---|---|
+| "Cannot reproduce it" | Evidence captured at the moment of observation: attach to the stand, probes in the service's own code while QA drives the UI | attach works locally; stands need path mapping |
+| "Root cause takes hours" | `explain_value`, `diff_runs`, `findings` | `explain_value` done; the other two are next |
+| "Flaky tests" | Honestly, the weakest case — see below | partial |
+| "Post-release regressions" | `attach` to a live process, goroutine/thread state, ancestry | works locally |
 
-A transcript comes back with the server's own reading: a value that was monotonic and stopped
-being; `nil` or zero where it never appeared before; an iteration count that differs between runs;
-a probe that never fired; a panic correlated with the last recorded values.
+**On flaky tests, plainly:** outside Linux-with-eBPF, tracing stops the process at every
+hit, so observing a race changes the race. Conditions and hit counts reduce the number
+of stops, and that helps, but this tool will not be the answer to a timing bug it
+perturbs. Saying so is cheaper than discovering it during an incident.
 
-Cheap, language-neutral by construction (it reads the transcript, not the debugger), and it is the
-difference between handing over data and handing over an answer.
+## Near term, in the order that unblocks the rest
 
-### 2. `diff_runs` — passing input against failing input
+### 1. The DAP backend — Python, JavaScript/TypeScript, Ruby
 
-Run the target twice under the same probes, return the **first point where the transcripts
-diverge**. Bug localisation becomes one line instead of four hundred lines of log. Builds entirely
-on `trace_execution` plus the `findings` comparison machinery.
+Nothing else is worth building first, because everything else would serve a third of
+the estate. One implementation, three runtimes: `debugpy`, `js-debug`, `rdbg`.
 
-### 3. Streaming traces
+It is also the test the neutral model has never had. An abstraction with one
+implementation is usually wrong, and the cost of finding that out rises with every
+tool added on top of it. Capabilities are the safety valve: DAP has data breakpoints
+but no per-unit hit counts and no breakpoint-side expression recording, so the backend
+declares `trace_mode: suspend_only` and the tool layer degrades rather than lies.
 
-`trace_execution` blocks until the run ends. Hits should arrive by cursor while it runs, the way
-`get_session_output` already works. Turns a long-running service from "unusable with this tool"
-into "watchable".
+### 2. `findings` — the server reads the transcript
 
-### 4. Attach to a running process
+A transcript comes back with the server's own reading: a value that was monotonic and
+stopped being, `nil` where it never appeared, an iteration count that differs between
+runs, a probe that never fired, a panic correlated with the last recorded values.
 
-Debug a service that is already up — a `docker-compose` stand, a remote host. The biggest practical
-unlock for real work, and the one that drags in the most: container-to-host path mapping (the
-`PathMapping` model exists and is unexercised), and a guard against an agent suspending a service
-somebody else is using.
+This is what makes the CI integration worth anything. A transcript nobody reads is not
+evidence. Language-neutral by construction, because findings are computed from the
+transcript rather than from the debugger.
 
----
+### 3. `diff_runs` — passing input against failing input
+
+Run twice under the same probes, return the first point where the transcripts diverge.
+Directly attacks "root cause takes hours", and is the only honest lever available
+against flaky tests: compare a passing run with a failing one rather than trying to
+watch the race.
+
+### 4. Non-interactive CI mode
+
+One command, no agent in the loop: rerun a failing test under the debugger with probes
+derived from the failure, and write an artifact a human or a reviewer can read. This is
+what "wired into how products are built" actually means, and it needs (2) and (3) to
+produce anything worth attaching.
+
+### 5. QA on the web: Playwright alongside the debugger, and attach to stands
+
+Playwright drives the flow while breakpoints sit in the service's own code — "run the
+checkout flow and stop when `total` goes negative" is a question neither tool answers
+alone. Needs container-to-host path mapping, which is modelled and unexercised, and a
+guard against an agent suspending a stand somebody else is using.
 
 ## Medium term — prove the abstraction, then spend it
 
