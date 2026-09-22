@@ -45,7 +45,7 @@ type supervisor struct {
 // dlv debug and dlv test compile with the optimiser and inliner off by default,
 // which is why the agent can see local variables at all; dlv exec takes the
 // binary as given, so the caller is told the difference.
-func launchArgs(mode model.LaunchMode, target, socket string, args []string, testRun string) ([]string, bool, error) {
+func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, args []string, testRun string) ([]string, bool, error) {
 	var sub string
 	switch mode {
 	case model.LaunchTest:
@@ -60,6 +60,14 @@ func launchArgs(mode model.LaunchMode, target, socket string, args []string, tes
 
 	out := []string{sub, "--headless", "--api-version=2", "--accept-multiclient",
 		"--log-dest=2", "--listen=unix:" + socket}
+	// Send the compiled binary into our own temporary directory. By default
+	// Delve builds a __debug_bin<random> file in the working directory and
+	// deletes it on exit -- but this server kills the process group, so Delve
+	// never gets to. Owning the path means the litter disappears with the
+	// directory we already remove, instead of accumulating in the user's repo.
+	if buildOutput != "" && mode != model.LaunchExec {
+		out = append(out, "--output="+buildOutput)
+	}
 	if target != "" {
 		out = append(out, target)
 	}
@@ -81,8 +89,9 @@ func (s *supervisor) start(ctx context.Context, dlvPath string, req model.Launch
 		return false, fmt.Errorf("could not create a socket directory: %w", err)
 	}
 	socket := filepath.Join(tmpDir, "dlv.sock")
+	buildOutput := filepath.Join(tmpDir, "debug.bin")
 
-	args, optimisationsDisabled, err := launchArgs(req.Mode, req.Target, socket, req.Args, req.TestRun)
+	args, optimisationsDisabled, err := launchArgs(req.Mode, req.Target, socket, buildOutput, req.Args, req.TestRun)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		return false, err
