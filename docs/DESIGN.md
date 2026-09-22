@@ -291,8 +291,8 @@ The direction, to be verified before it is committed to:
   through the web is tested through the web, so this is the native shape of the work rather than an
   add-on.
 
-Unlike the Delve claims in this document, nothing in this section has been verified against source
-in this session. Treat it as a direction, not a design.
+Unlike the Delve claims in this document, nothing in this section has been verified against source.
+Treat it as a direction, not a design.
 
 ## Testing
 

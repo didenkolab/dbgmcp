@@ -148,8 +148,8 @@ Stated plainly, so nobody mistakes the test suite for more than it is.
 single suite in `internal/backend/conformance`, run against each backend. A declared capability
 must demonstrably work; an undeclared one must refuse with a message naming what is missing.
 
-This is not decoration. The first run of that suite caught a capability this server was declaring
-and could not deliver, in the first commit that declared it.
+This is not decoration. A declaration is one line and a capability is not, so the two drift apart by
+default; the suite is what stops them.
 
 ## Development
 

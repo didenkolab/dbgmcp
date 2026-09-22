@@ -29,8 +29,8 @@ So: **if you declare a capability, the conformance suite must exercise it.**
 directions — a declared capability must demonstrably work, and an undeclared one
 must refuse with a message that names what is missing.
 
-This is not ceremony. The first run of that suite caught a capability this server
-was declaring and could not deliver, in the same commit that declared it.
+This is not ceremony. A declaration is trivial to write and a capability is not,
+so the two drift apart by default, and the suite is what stops them.
 
 ## The round-trip budget
 
