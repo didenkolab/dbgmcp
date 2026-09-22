@@ -2,7 +2,7 @@
 
 ## Where this stands
 
-Working today, verified by tests that launch real processes:
+Working, and verified by tests that launch real processes:
 
 - **Go, headless.** Launch (`test` / `debug` / `exec`), breakpoints by symbol or line, conditions,
   hit-count conditions, stepping, watchpoints, evaluation, variable mutation, goroutines with
