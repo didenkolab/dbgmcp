@@ -25,6 +25,12 @@ func Subtotal(items []Item) int {
 	return total
 }
 
+// worker exists so the conformance suite has a goroutine whose ancestry can be
+// asked for: it is created by main, so its chain must lead back there.
+func worker(out chan<- int, items []Item) {
+	out <- Subtotal(items)
+}
+
 func main() {
 	cart := []Item{
 		{Name: "mug", Price: 10, Qty: 3},
@@ -32,4 +38,8 @@ func main() {
 		{Name: "chair", Price: 150, Qty: 4},
 	}
 	fmt.Println("subtotal:", Subtotal(cart))
+
+	out := make(chan int, 1)
+	go worker(out, cart)
+	fmt.Println("from worker:", <-out)
 }

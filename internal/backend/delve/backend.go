@@ -196,21 +196,58 @@ func (b *Backend) WaitForStop(ctx context.Context, timeout time.Duration) (model
 		return b.currentStop()
 	}
 
-	select {
-	case state, ok := <-ch:
-		b.mu.Lock()
-		b.continueCh = nil
-		b.mu.Unlock()
-		if !ok {
-			return b.currentStop()
+	// Delve keeps the channel open and keeps streaming while every stop is a
+	// tracepoint, closing it only at a real one. Treating the first state as
+	// the answer would turn a tracepoint into a spurious pause and strand the
+	// channel, so tracepoint states are skipped here; their recorded values are
+	// drained separately.
+	deadline := time.After(timeout)
+	for {
+		select {
+		case state, ok := <-ch:
+			if !ok {
+				b.clearContinue()
+				return b.currentStop()
+			}
+			if isTracepointOnly(state) {
+				continue
+			}
+			b.clearContinue()
+			return b.stopFromState(state)
+		case <-deadline:
+			return model.StopEvent{State: model.StateRunning, Reason: model.StopUnknown,
+				Message: fmt.Sprintf("still running after %s", timeout)}, nil
+		case <-ctx.Done():
+			return model.StopEvent{}, ctx.Err()
 		}
-		return b.stopFromState(state)
-	case <-time.After(timeout):
-		return model.StopEvent{State: model.StateRunning, Reason: model.StopUnknown,
-			Message: fmt.Sprintf("still running after %s", timeout)}, nil
-	case <-ctx.Done():
-		return model.StopEvent{}, ctx.Err()
 	}
+}
+
+func (b *Backend) clearContinue() {
+	b.mu.Lock()
+	b.continueCh = nil
+	b.mu.Unlock()
+}
+
+// isTracepointOnly reports a stop that Delve will resume from by itself: every
+// thread that hit something hit a tracepoint. This mirrors the condition
+// Delve's own client uses to decide whether to keep the channel open.
+func isTracepointOnly(state *api.DebuggerState) bool {
+	if state == nil || state.Exited {
+		return false
+	}
+	hitSomething := false
+	for i := range state.Threads {
+		bp := state.Threads[i].Breakpoint
+		if bp == nil {
+			continue
+		}
+		hitSomething = true
+		if !bp.Tracepoint && !bp.TraceReturn {
+			return false
+		}
+	}
+	return hitSomething
 }
 
 func (b *Backend) currentStop() (model.StopEvent, error) {

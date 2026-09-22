@@ -44,6 +44,10 @@ type StartIn struct {
 	TestRun string            `json:"test_run,omitempty" jsonschema:"Only for mode=test: the -test.run regular expression selecting which tests to run."`
 	Args    []string          `json:"args,omitempty" jsonschema:"Arguments passed to the program itself."`
 	Env     map[string]string `json:"env,omitempty" jsonschema:"Extra environment variables for the debuggee."`
+	// RecordAncestry is a switch rather than an environment variable the agent
+	// has to know, and it is off by default because recording a stack at every
+	// goroutine creation costs real performance.
+	RecordAncestry bool `json:"record_ancestry,omitempty" jsonschema:"Record where each execution unit was created from, so get_unit_ancestors can answer. Off by default because it slows the target down."`
 }
 
 type StartOut struct {
@@ -68,10 +72,20 @@ func (r *Registry) startDebugSession(ctx context.Context, _ *mcp.CallToolRequest
 		return fail[StartOut]("Missing required parameter: work_dir")
 	}
 
+	env := in.Env
+	if in.RecordAncestry {
+		if env == nil {
+			env = map[string]string{}
+		}
+		if _, set := env["GODEBUG"]; !set {
+			env["GODEBUG"] = "tracebackancestors=10"
+		}
+	}
+
 	b := delve.New()
 	req := model.LaunchRequest{
 		Mode: mode, Target: in.Target, WorkDir: in.WorkDir,
-		TestRun: in.TestRun, Args: in.Args, Env: in.Env,
+		TestRun: in.TestRun, Args: in.Args, Env: env,
 	}
 	if err := b.Launch(ctx, req); err != nil {
 		return fail[StartOut]("%s", err.Error())

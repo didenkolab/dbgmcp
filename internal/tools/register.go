@@ -1,6 +1,9 @@
 package tools
 
-import "github.com/modelcontextprotocol/go-sdk/mcp"
+import (
+	"github.com/didenkolab/dbgmcp/internal/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
 
 func ptr[T any](v T) *T { return &v }
 
@@ -77,6 +80,56 @@ func (r *Registry) Register(s *mcp.Server) {
 		Description: "Block until the target stops, then return the whole stopped state at once: location, reason, execution unit, stack, variables in scope and surrounding source. " +
 			"Prefer this over calling get_variables, get_stack_trace and get_source_context separately.",
 	}, r.waitForPause)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "step_over",
+		Annotations: mutating("Step Over"),
+		Description: "Run the current line and stop on the next one, without descending into calls. Returns where it landed, so no follow-up call is needed.",
+	}, r.step(model.StepOver))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "step_into",
+		Annotations: mutating("Step Into"),
+		Description: "Step into the call on the current line. Returns where it landed.",
+	}, r.step(model.StepInto))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "step_out",
+		Annotations: mutating("Step Out"),
+		Description: "Run until the current function returns, and stop in its caller. Returns where it landed.",
+	}, r.step(model.StepOut))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "run_to_line",
+		Annotations: mutating("Run To Line"),
+		Description: "Continue until a specific line is reached. The temporary breakpoint used is always removed, including when the run fails.",
+	}, r.runToLine)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "pause_execution",
+		Annotations: mutating("Pause Execution"),
+		Description: "Interrupt a running target and report where it was. Use this on a program that is not going to hit a breakpoint by itself, for example one that is stuck.",
+	}, r.pauseExecution)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "set_variable",
+		Annotations: mutating("Set Variable"),
+		Description: "Change a value in the running program, then read it back and report what it now holds. Paths are the same ones get_variables returns.",
+	}, r.setVariable)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "set_watchpoint",
+		Annotations: mutating("Set Watchpoint"),
+		Description: "Stop the program when a variable is written to (or read). This answers 'what changed this value' directly, instead of guessing where to put a breakpoint. " +
+			"The variable must already be in scope, and the watchpoint disappears when its stack frame returns.",
+	}, r.setWatchpoint)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_unit_ancestors",
+		Annotations: readOnly("Get Unit Ancestors"),
+		Description: "Return the chain of execution units that created this one, with their stacks -- the answer to 'where did this goroutine come from'. " +
+			"Requires the session to have been started with ancestry recording enabled.",
+	}, r.getUnitAncestors)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_variables",

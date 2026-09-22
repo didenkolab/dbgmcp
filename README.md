@@ -75,18 +75,30 @@ Stated plainly, so nobody mistakes the test suite for more than it is.
   implementation is usually wrong. Treat the interface as unproven.
 - **Launch only.** `test`, `debug` and `exec`. There is no attaching to a process this server did
   not start, and no remote or containerised target. `PathMapping` is modelled but not exercised.
-- **No stepping tools yet.** `step_over`, `step_into`, `step_out`, `run_to_line` and
-  `pause_execution` are not implemented; breakpoints and conditions cover the current tests.
-- **No watchpoints yet**, although Delve supports them and the capability is declared. That
-  declaration is currently ahead of the conformance tests, which is exactly the situation the
-  design warns about -- fixing it is the next task.
-- **No trace_execution tool yet.** The tracepoint primitive works (`record` + `suspend: none`),
-  but the one-call transcript tool built on it is not written.
-- **No safety guard on evaluation.** Delve does not call functions by default, which removes the
-  worst of the risk, but nothing yet blocks a deliberate `Call`.
-- **No findings.** The design's analytics layer -- anomalies computed from a transcript -- is not
-  built.
+- **No `trace_execution` tool yet.** The tracepoint primitive works and is covered by the
+  conformance suite (`record` plus `suspend: "none"` genuinely does not stop the program), but the
+  one-call transcript tool built on it is not written.
+- **No `findings`.** The design's analytics layer -- anomalies computed from a transcript -- does
+  not exist.
+- **No `list_debug_targets`.** The agent must be told which package to run; nothing yet discovers
+  them from `go list`.
+- **No safety guard on evaluation.** Delve does not call functions by default, which the
+  conformance suite verifies, so the worst of the risk is absent rather than defended against.
+- **Watchpoints are hardware watchpoints.** At most four exist at once, and each is bound to the
+  stack frame it was set in, so it vanishes when that frame returns. The variable must already be
+  in scope: stopping at a function's entry is before its locals are declared.
+- **Goroutine ancestry costs performance** and is therefore off unless `record_ancestry` is set on
+  the session.
 - **Tested on darwin/arm64 only.** linux/amd64 is expected to work and is not yet verified.
+
+## Keeping the capability claims honest
+
+`describe_backend` is only worth reading if it is true, so every field of it is exercised by a
+single suite in `internal/backend/conformance`, run against each backend. A declared capability
+must demonstrably work; an undeclared one must refuse with a message naming what is missing.
+
+This is not decoration. The first run of that suite caught a capability this server was declaring
+and could not deliver, in the first commit that declared it.
 
 ## Development
 

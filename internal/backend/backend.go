@@ -28,10 +28,24 @@ type Backend interface {
 	Stop(ctx context.Context) error
 
 	SetBreakpoint(ctx context.Context, bp model.Breakpoint) (model.Breakpoint, error)
+	// SetWatchpoint stops the program when a value is accessed. Backends
+	// without it declare Watchpoints=none and return an UnsupportedError naming
+	// the alternative.
+	SetWatchpoint(ctx context.Context, frameIndex int, expr string, mode model.WatchMode) (model.Breakpoint, error)
 	ListBreakpoints(ctx context.Context) ([]model.Breakpoint, error)
 	RemoveBreakpoint(ctx context.Context, id string) error
 
 	Resume(ctx context.Context) error
+	// Pause interrupts a running target. It is the one control an agent has
+	// over a program that is not going to hit a breakpoint on its own.
+	Pause(ctx context.Context) (model.StopEvent, error)
+	// Step performs one step and returns where it landed, rather than requiring
+	// a separate wait. Delve's stepping is synchronous, so charging the agent a
+	// second round trip for the answer would be a self-inflicted cost.
+	Step(ctx context.Context, kind model.StepKind) (model.StopEvent, error)
+	// RunToLine continues until a location is reached, without leaving a
+	// breakpoint behind for the agent to clean up.
+	RunToLine(ctx context.Context, file string, line int, timeout time.Duration) (model.StopEvent, error)
 	// WaitForStop blocks until the target next stops or exits. It returns the
 	// whole stopped state -- unit, frames, variables, source -- because the
 	// alternative is four more calls to answer the question the agent already
@@ -43,4 +57,8 @@ type Backend interface {
 	Stack(ctx context.Context, unitID string, maxFrames int) ([]model.Frame, error)
 	ExecUnits(ctx context.Context, limit int) ([]model.ExecUnit, error)
 	Source(ctx context.Context, file string, line, contextLines int) (*model.SourceSpan, error)
+	// SetVariable changes a value in the running program.
+	SetVariable(ctx context.Context, frameIndex int, name, value string) error
+	// Ancestors returns the chain of units that created this one.
+	Ancestors(ctx context.Context, unitID string, depth int) (model.Ancestry, error)
 }

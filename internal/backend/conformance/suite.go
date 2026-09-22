@@ -1,0 +1,401 @@
+// Package conformance is one test suite run against every backend.
+//
+// It exists to keep describe_backend honest. A capability that is declared but
+// not exercised is worse than no capability model at all, because an agent will
+// plan against it and be wrong in a way it cannot detect. Every field of
+// Capabilities is checked here, in both directions: a declared capability must
+// work, and an undeclared one must refuse with a message that names what is
+// missing.
+package conformance
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/didenkolab/dbgmcp/internal/backend"
+	"github.com/didenkolab/dbgmcp/internal/model"
+)
+
+// Fixture describes a program the suite can drive. A backend supplies one
+// pointing at a target in its own language.
+type Fixture struct {
+	Name string
+	// New returns a fresh, unstarted backend. Each subtest gets its own,
+	// because stepping and watchpoints both mutate session state.
+	New func() backend.Backend
+	// Launch starts the fixture program.
+	Launch model.LaunchRequest
+	// LaunchWithAncestry is Launch plus whatever the runtime needs to record
+	// where its execution units came from. A zero value means the backend needs
+	// nothing extra.
+	LaunchWithAncestry model.LaunchRequest
+
+	// CallSymbol is a function called more than once, with at least one
+	// argument, resolvable by name without a line number.
+	CallSymbol string
+	// IntExpr is an int-valued, settable expression in scope at CallSymbol.
+	IntExpr string
+	// CallExpr calls a function. Used to check how evaluation is guarded.
+	CallExpr string
+
+	// LoopSymbol is a function containing a local that changes across a loop.
+	LoopSymbol string
+	// LoopLocal is that local's name, in scope at LoopSymbol.
+	LoopLocal string
+
+	// SpawnedSymbol is a function that runs in a unit created by another unit.
+	SpawnedSymbol string
+}
+
+// Run executes the whole suite. Call it from each backend's own test file.
+func Run(t *testing.T, f Fixture) {
+	t.Run("capabilities are internally consistent", func(t *testing.T) { testConsistency(t, f) })
+	t.Run("breakpoint by symbol", func(t *testing.T) { testBySymbol(t, f) })
+	t.Run("hit counts", func(t *testing.T) { testHitCounts(t, f) })
+	t.Run("stepping", func(t *testing.T) { testStepping(t, f) })
+	t.Run("set variable", func(t *testing.T) { testSetVariable(t, f) })
+	t.Run("watchpoints", func(t *testing.T) { testWatchpoints(t, f) })
+	t.Run("non-suspending trace", func(t *testing.T) { testTrace(t, f) })
+	t.Run("evaluation guard", func(t *testing.T) { testEvalGuard(t, f) })
+	t.Run("ancestry", func(t *testing.T) { testAncestry(t, f) })
+}
+
+func start(t *testing.T, f Fixture, req model.LaunchRequest) backend.Backend {
+	t.Helper()
+	b := f.New()
+	t.Cleanup(func() { _ = b.Stop(context.Background()) })
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if err := b.Launch(ctx, req); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	return b
+}
+
+// runToSymbol is the "get somewhere interesting" helper every other check
+// needs: break on a function, run, and land there.
+func runToSymbol(t *testing.T, b backend.Backend, symbol string) model.StopEvent {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := b.SetBreakpoint(ctx, model.Breakpoint{Location: model.Location{Symbol: symbol}}); err != nil {
+		t.Fatalf("set breakpoint at %s: %v", symbol, err)
+	}
+	if err := b.Resume(ctx); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	ev, err := b.WaitForStop(ctx, 60*time.Second)
+	if err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if ev.State != model.StatePaused {
+		t.Fatalf("expected to stop at %s, got state=%s reason=%s: %s", symbol, ev.State, ev.Reason, ev.Message)
+	}
+	return ev
+}
+
+func requireUnsupported(t *testing.T, err error, capability string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s is not declared, so it must refuse, but it succeeded", capability)
+	}
+	var ue *backend.UnsupportedError
+	if !errors.As(err, &ue) {
+		t.Fatalf("%s is not declared, so it must refuse with an UnsupportedError naming it; got %v", capability, err)
+	}
+	if !strings.Contains(ue.Error(), capability) {
+		t.Errorf("refusal does not name %q: %v", capability, ue)
+	}
+}
+
+func testConsistency(t *testing.T, f Fixture) {
+	caps := f.New().Capabilities()
+
+	declaresWatchKind := false
+	hasLine := false
+	for _, k := range caps.BreakpointKinds {
+		if k == string(model.BreakWatch) {
+			declaresWatchKind = true
+		}
+		if k == string(model.BreakLine) {
+			hasLine = true
+		}
+	}
+	if (caps.Watchpoints != backend.SupportNone) != declaresWatchKind {
+		t.Errorf("Watchpoints=%s but breakpoint kinds are %v: the two must agree",
+			caps.Watchpoints, caps.BreakpointKinds)
+	}
+	if !hasLine {
+		t.Error("every backend must support line breakpoints")
+	}
+}
+
+func testBySymbol(t *testing.T, f Fixture) {
+	b := start(t, f, f.Launch)
+	ctx := context.Background()
+
+	bp, err := b.SetBreakpoint(ctx, model.Breakpoint{Location: model.Location{Symbol: f.CallSymbol}})
+	if !b.Capabilities().BreakpointBySymbol {
+		requireUnsupported(t, err, "breakpoint_by_symbol")
+		return
+	}
+	if err != nil {
+		t.Fatalf("breakpoint_by_symbol is declared but setting one failed: %v", err)
+	}
+	// A symbol must resolve to a real place, or the agent cannot tell where it
+	// will stop.
+	if bp.Location.File == "" || bp.Location.Line == 0 {
+		t.Errorf("symbol resolved to no location: %+v", bp.Location)
+	}
+}
+
+func testHitCounts(t *testing.T, f Fixture) {
+	b := start(t, f, f.Launch)
+	ctx := context.Background()
+	caps := b.Capabilities()
+
+	runToSymbol(t, b, f.CallSymbol)
+	// Go round twice, so a count of one cannot pass by accident.
+	if err := b.Resume(ctx); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if _, err := b.WaitForStop(ctx, 60*time.Second); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+
+	bps, err := b.ListBreakpoints(ctx)
+	if err != nil || len(bps) == 0 {
+		t.Fatalf("list breakpoints: %v (%d found)", err, len(bps))
+	}
+	bp := bps[0]
+
+	switch caps.HitCounts {
+	case backend.HitCountsNone:
+		if bp.HitCount != 0 {
+			t.Errorf("hit_counts is 'none' but a count of %d was reported", bp.HitCount)
+		}
+	case backend.HitCountsTotal, backend.HitCountsPerUnit:
+		if bp.HitCount < 2 {
+			t.Errorf("hit_counts is %q but after two hits the count is %d", caps.HitCounts, bp.HitCount)
+		}
+		if caps.HitCounts == backend.HitCountsPerUnit && len(bp.HitCountByUnit) == 0 {
+			t.Error("hit_counts is 'per_unit' but no per-unit breakdown was reported")
+		}
+	}
+}
+
+func testStepping(t *testing.T, f Fixture) {
+	b := start(t, f, f.Launch)
+	ctx := context.Background()
+	before := runToSymbol(t, b, f.CallSymbol)
+
+	after, err := b.Step(ctx, model.StepOver)
+	if err != nil {
+		t.Fatalf("step over: %v", err)
+	}
+	// Stepping must return where it landed. Making the agent ask again for the
+	// answer it just paid a call for is exactly the cost this design avoids.
+	if len(after.Frames) == 0 {
+		t.Error("step returned no frames")
+	}
+	if after.State != model.StatePaused {
+		t.Fatalf("after a step the target should be paused, got %s", after.State)
+	}
+	if len(before.Frames) > 0 && len(after.Frames) > 0 &&
+		before.Frames[0].Line == after.Frames[0].Line && before.Frames[0].Function == after.Frames[0].Function {
+		t.Errorf("step over did not move: still at %s:%d", after.Frames[0].Function, after.Frames[0].Line)
+	}
+
+	if _, err := b.Step(ctx, model.StepOut); err != nil {
+		t.Errorf("step out: %v", err)
+	}
+}
+
+func testSetVariable(t *testing.T, f Fixture) {
+	b := start(t, f, f.Launch)
+	ctx := context.Background()
+	runToSymbol(t, b, f.CallSymbol)
+	caps := b.Capabilities()
+
+	err := b.SetVariable(ctx, 0, f.IntExpr, "7")
+	if caps.SetVariable == backend.SupportNone {
+		requireUnsupported(t, err, "set_variable")
+		return
+	}
+	if err != nil {
+		t.Fatalf("set_variable is declared %q but setting an int failed: %v", caps.SetVariable, err)
+	}
+	// Read it back: a write that cannot be observed is not a write.
+	got, err := b.Evaluate(ctx, 0, f.IntExpr, model.ValueBudget{})
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if got.Value != "7" {
+		t.Errorf("set %s to 7 but it reads as %s", f.IntExpr, got.Value)
+	}
+}
+
+func testWatchpoints(t *testing.T, f Fixture) {
+	b := start(t, f, f.Launch)
+	ctx := context.Background()
+	caps := b.Capabilities()
+
+	runToSymbol(t, b, f.LoopSymbol)
+	// A watchpoint needs the variable to exist already. Stopping at a function's
+	// entry is before its locals are declared, so step until the name resolves
+	// -- which is what an agent has to do too, and why the backend's refusal
+	// says so.
+	bringIntoScope(t, b, f.LoopLocal)
+
+	wp, err := b.SetWatchpoint(ctx, 0, f.LoopLocal, model.WatchWrite)
+	if caps.Watchpoints == backend.SupportNone {
+		requireUnsupported(t, err, "watchpoints")
+		return
+	}
+	if err != nil {
+		t.Fatalf("watchpoints declared %q but watching %q failed: %v", caps.Watchpoints, f.LoopLocal, err)
+	}
+	if wp.Kind != model.BreakWatch {
+		t.Errorf("a watchpoint came back as kind %q", wp.Kind)
+	}
+
+	// It must actually fire: a watchpoint that never stops anything is a
+	// capability claim with nothing behind it.
+	if err := b.Resume(ctx); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	ev, err := b.WaitForStop(ctx, 60*time.Second)
+	if err != nil {
+		t.Fatalf("wait after watchpoint: %v", err)
+	}
+	if ev.State != model.StatePaused {
+		t.Fatalf("the watchpoint did not fire: state=%s reason=%s %s", ev.State, ev.Reason, ev.Message)
+	}
+
+	// And it must be listed with the breakpoints, not in a parallel registry.
+	bps, err := b.ListBreakpoints(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var seen bool
+	for _, bp := range bps {
+		if bp.Kind == model.BreakWatch {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Error("the watchpoint is not visible through list_breakpoints")
+	}
+}
+
+// bringIntoScope steps forward until a local is evaluable, or gives up with a
+// message that says which it was.
+func bringIntoScope(t *testing.T, b backend.Backend, name string) {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < 10; i++ {
+		if _, err := b.Evaluate(ctx, 0, name, model.ValueBudget{}); err == nil {
+			return
+		}
+		if _, err := b.Step(ctx, model.StepOver); err != nil {
+			t.Fatalf("stepping to bring %q into scope: %v", name, err)
+		}
+	}
+	t.Fatalf("%q never came into scope after ten steps", name)
+}
+
+func testTrace(t *testing.T, f Fixture) {
+	b := start(t, f, f.Launch)
+	ctx := context.Background()
+	caps := b.Capabilities()
+
+	_, err := b.SetBreakpoint(ctx, model.Breakpoint{
+		Location: model.Location{Symbol: f.CallSymbol},
+		Suspend:  model.SuspendNone,
+		Record:   []string{f.IntExpr},
+	})
+	if err != nil {
+		t.Fatalf("set tracepoint: %v", err)
+	}
+	if err := b.Resume(ctx); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	ev, err := b.WaitForStop(ctx, 60*time.Second)
+	if err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+
+	switch caps.NonSuspendingTrace {
+	case backend.TraceBuffered:
+		// The defining property: a recording breakpoint must not stop the
+		// program. Reaching the end proves it ran straight through.
+		if ev.State != model.StateExited {
+			t.Errorf("non_suspending_trace is 'buffered' but the target stopped at the tracepoint: state=%s reason=%s",
+				ev.State, ev.Reason)
+		}
+	case backend.TraceSuspendOnly:
+		if ev.State != model.StatePaused {
+			t.Errorf("non_suspending_trace is 'suspend_only' so the target should have stopped, state=%s", ev.State)
+		}
+	}
+}
+
+func testEvalGuard(t *testing.T, f Fixture) {
+	if f.CallExpr == "" {
+		t.Skip("fixture supplies no calling expression")
+	}
+	b := start(t, f, f.Launch)
+	ctx := context.Background()
+	runToSymbol(t, b, f.CallSymbol)
+
+	_, err := b.Evaluate(ctx, 0, f.CallExpr, model.ValueBudget{})
+	switch b.Capabilities().EvalCallsFunctions {
+	case backend.SupportFull:
+		if err != nil {
+			t.Errorf("eval_calls_functions is 'full' but calling a function failed: %v", err)
+		}
+	case backend.SupportGuarded, backend.SupportNone:
+		// The point of declaring this is that an agent knows not to plan around
+		// function calls. If they silently work, the declaration is a lie in
+		// the safe direction, which is still a lie.
+		if err == nil {
+			t.Errorf("eval_calls_functions is %q but %q was evaluated without objection",
+				b.Capabilities().EvalCallsFunctions, f.CallExpr)
+		}
+	}
+}
+
+func testAncestry(t *testing.T, f Fixture) {
+	if f.SpawnedSymbol == "" {
+		t.Skip("fixture supplies no spawned symbol")
+	}
+	caps := f.New().Capabilities()
+	req := f.LaunchWithAncestry
+	if req.Mode == "" {
+		req = f.Launch
+	}
+	b := start(t, f, req)
+	ctx := context.Background()
+
+	runToSymbol(t, b, f.SpawnedSymbol)
+
+	anc, err := b.Ancestors(ctx, "", 16)
+	if !caps.Ancestry {
+		if err == nil && len(anc.Chain) > 0 {
+			t.Error("ancestry is not declared but a chain came back")
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("ancestry is declared but reading it failed: %v", err)
+	}
+	if len(anc.Chain) == 0 {
+		t.Fatalf("ancestry is declared but the chain is empty. Note: %s", anc.Note)
+	}
+	// The chain must lead somewhere real, or it is decoration.
+	if len(anc.Chain[0].Frames) == 0 {
+		t.Error("the first ancestor has no frames")
+	}
+}
