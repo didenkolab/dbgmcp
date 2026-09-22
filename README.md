@@ -69,6 +69,10 @@ debuggee at every hit and resumes it itself, so the transcript reports `mode: "a
 `perturbs_timing: true`. Genuinely non-stop tracing is `mode: "buffered"`, and it is not available
 here. An agent chasing a race reads that from the response rather than from this paragraph.
 
+**It can see what the program printed.** `get_session_output` returns the debuggee's stdout and
+stderr, with a cursor for tailing. Outside an IDE there is no console, so without this a panic
+message -- often the shortest path to the answer -- would be invisible.
+
 **It finds its own targets.** `list_debug_targets` reads the project and reports the main packages
 and every test function by name. An IDE plugin can list run configurations because a human made
 them; with no IDE there is nothing to list, so they are derived from the source instead -- without
@@ -89,14 +93,18 @@ Stated plainly, so nobody mistakes the test suite for more than it is.
 - **No `findings`.** The design's analytics layer -- anomalies computed from a transcript, such
   as a value that was monotonic and stopped being -- does not exist. `trace_execution` returns the
   transcript; reading it is still the agent's job.
+- **`trace_mode` is `auto_continue`, never `buffered`.** Genuinely non-stop tracing needs Delve's
+  eBPF uprobes: Linux-only, privileged, and not enabled here. On macOS the gdbserial backend
+  cannot do it at all.
 - **No safety guard on evaluation.** Delve does not call functions by default, which the
   conformance suite verifies, so the worst of the risk is absent rather than defended against.
-- **Watchpoints are hardware watchpoints.** At most four exist at once, and each is bound to the
-  stack frame it was set in, so it vanishes when that frame returns. The variable must already be
-  in scope: stopping at a function's entry is before its locals are declared.
-- **Goroutine ancestry costs performance** and is therefore off unless `record_ancestry` is set on
-  the session.
-- **Tested on darwin/arm64 only.** linux/amd64 is expected to work and is not yet verified.
+- **Watchpoints are hardware watchpoints.** At most four at once, each bound to the stack frame it
+  was set in. The variable must already be in scope: stopping at a function's entry is before its
+  locals are declared.
+- **Goroutine ancestry costs performance** and is off unless `record_ancestry` is set on the
+  session.
+- **Output is a bounded ring.** A very chatty program loses its oldest lines; `dropped` says how
+  many, so silence is never mistaken for a quiet program.
 
 ## Keeping the capability claims honest
 

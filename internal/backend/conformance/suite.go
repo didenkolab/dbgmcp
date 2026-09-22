@@ -58,6 +58,7 @@ func Run(t *testing.T, f Fixture) {
 	t.Run("stepping", func(t *testing.T) { testStepping(t, f) })
 	t.Run("set variable", func(t *testing.T) { testSetVariable(t, f) })
 	t.Run("watchpoints", func(t *testing.T) { testWatchpoints(t, f) })
+	t.Run("stepping with a watchpoint set", func(t *testing.T) { testStepWithWatchpoint(t, f) })
 	t.Run("trace mode", func(t *testing.T) { testTrace(t, f) })
 	t.Run("evaluation guard", func(t *testing.T) { testEvalGuard(t, f) })
 	t.Run("ancestry", func(t *testing.T) { testAncestry(t, f) })
@@ -304,6 +305,52 @@ func bringIntoScope(t *testing.T, b backend.Backend, name string) {
 		}
 	}
 	t.Fatalf("%q never came into scope after ten steps", name)
+}
+
+// testStepWithWatchpoint exercises single-stepping while a hardware watchpoint
+// is armed.
+//
+// This is not a theoretical combination. On macOS Delve reaches the target
+// through debugserver, and that path carries a workaround for a Mach kernel
+// issue where stepping over a breakpoint with watchpoints set can deliver a
+// spurious exception. Whether that workaround is transparent is a property of
+// the platform, not of the debugger's documentation, so it is measured on every
+// matrix leg rather than assumed.
+func testStepWithWatchpoint(t *testing.T, f Fixture) {
+	b := start(t, f, f.Launch)
+	ctx := context.Background()
+	if b.Capabilities().Watchpoints == backend.SupportNone {
+		t.Skip("backend declares no watchpoints")
+	}
+
+	runToSymbol(t, b, f.LoopSymbol)
+	bringIntoScope(t, b, f.LoopLocal)
+	if _, err := b.SetWatchpoint(ctx, 0, f.LoopLocal, model.WatchWrite); err != nil {
+		t.Fatalf("set watchpoint: %v", err)
+	}
+
+	// Three steps is enough to cross the loop body, which is where a write to
+	// the watched local happens and where a spurious exception would surface.
+	for i := 0; i < 3; i++ {
+		ev, err := b.Step(ctx, model.StepOver)
+		if err != nil {
+			t.Fatalf("step %d with a watchpoint armed: %v", i+1, err)
+		}
+		if ev.State == model.StateExited {
+			return // the frame returned, taking the watchpoint with it
+		}
+		if ev.State != model.StatePaused {
+			t.Fatalf("step %d left the session in state %s (%s)", i+1, ev.State, ev.Message)
+		}
+		if len(ev.Frames) == 0 {
+			t.Fatalf("step %d returned no frames", i+1)
+		}
+	}
+
+	// The session must still be usable afterwards, not merely un-crashed.
+	if _, err := b.Evaluate(ctx, 0, f.LoopLocal, model.ValueBudget{}); err != nil {
+		t.Errorf("the session is unusable after stepping with a watchpoint: %v", err)
+	}
 }
 
 func testTrace(t *testing.T, f Fixture) {
