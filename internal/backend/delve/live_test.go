@@ -80,17 +80,23 @@ func TestLiveBreakpointBySymbolStopsWithFullContext(t *testing.T) {
 		t.Errorf("source context missing or pointing at the wrong line: %+v", stop.Source)
 	}
 
-	var it *model.Variable
-	for i := range stop.Variables {
-		if stop.Variables[i].Name == "it" {
-			it = &stop.Variables[i]
-		}
+	byPath := map[string]model.Variable{}
+	for _, v := range stop.Variables {
+		byPath[v.Name] = v
 	}
-	if it == nil {
+	it, ok := byPath["it"]
+	if !ok {
 		t.Fatalf("the function argument 'it' was not captured; got %d variables", len(stop.Variables))
 	}
-	if len(it.Children) == 0 {
-		t.Fatalf("argument 'it' came back without its fields: %+v", it)
+	// Fields must arrive as paths that are themselves valid expressions, so the
+	// agent can go straight from reading a value to evaluating one.
+	for _, path := range []string{"it.Name", "it.Price", "it.Qty"} {
+		if _, ok := byPath[path]; !ok {
+			t.Errorf("no entry for %q; the flattened paths were %v", path, keysOf(byPath))
+		}
+	}
+	if !strings.Contains(it.Value, "Price") {
+		t.Errorf("the struct was not rendered readably: %q", it.Value)
 	}
 	t.Logf("stopped at %s:%d with it=%s", bp.Location.File, bp.Location.Line, it.Value)
 }
@@ -146,4 +152,12 @@ func TestLiveStopLeavesNoProcessBehind(t *testing.T) {
 	if err := b.Stop(context.Background()); err != nil {
 		t.Fatalf("second stop: %v", err)
 	}
+}
+
+func keysOf(m map[string]model.Variable) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

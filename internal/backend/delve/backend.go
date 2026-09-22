@@ -297,14 +297,14 @@ func (b *Backend) variablesAt(c rpcClient, goroutineID int64, frame int, budget 
 		return nil, err
 	}
 	for _, v := range args {
-		out = append(out, toVariable(v, budget))
+		flattenVariable(v, v.Name, budget, &out)
 	}
 	locals, err := c.ListLocalVariables(scope, cfg)
 	if err != nil {
 		return out, nil
 	}
 	for _, v := range locals {
-		out = append(out, toVariable(v, budget))
+		flattenVariable(v, v.Name, budget, &out)
 	}
 	return out, nil
 }
@@ -332,7 +332,14 @@ func (b *Backend) Evaluate(_ context.Context, frameIndex int, expr string, budge
 	if err != nil {
 		return model.Variable{}, fmt.Errorf("could not evaluate %q: %w", expr, err)
 	}
-	return toVariable(*v, budget), nil
+	var flat []model.Variable
+	flattenVariable(*v, expr, budget, &flat)
+	if len(flat) == 0 {
+		return model.Variable{}, fmt.Errorf("could not evaluate %q", expr)
+	}
+	// The head of the flattened list is the value itself; its fields, if any,
+	// are reachable by asking for "<expr>.field".
+	return flat[0], nil
 }
 
 func (b *Backend) Stack(_ context.Context, unitID string, maxFrames int) ([]model.Frame, error) {

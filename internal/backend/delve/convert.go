@@ -2,8 +2,10 @@ package delve
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/didenkolab/dbgmcp/internal/model"
 	"github.com/go-delve/delve/pkg/goversion"
@@ -27,32 +29,60 @@ func loadConfig(b model.ValueBudget) api.LoadConfig {
 	}
 }
 
-func toVariable(v api.Variable, budget model.ValueBudget) model.Variable {
+// flattenVariable walks Delve's value tree into the flat, path-keyed list the
+// model uses. The path it builds is a real Go expression, so anything the agent
+// reads here it can immediately evaluate.
+func flattenVariable(v api.Variable, path string, budget model.ValueBudget, out *[]model.Variable) {
 	budget = budget.WithDefaults()
-	out := model.Variable{
-		Name:  v.Name,
-		Type:  v.Type,
-		Kind:  v.Kind.String(),
-		Value: presentValue(v),
+	*out = append(*out, model.Variable{
+		Name:      path,
+		Type:      v.Type,
+		Kind:      v.Kind.String(),
+		Value:     presentValue(v),
+		Truncated: isTruncated(v),
+	})
+
+	switch v.Kind.String() {
+	case "struct":
+		for _, c := range v.Children {
+			flattenVariable(c, path+"."+c.Name, budget, out)
+		}
+	case "slice", "array":
+		for i, c := range v.Children {
+			flattenVariable(c, fmt.Sprintf("%s[%d]", path, i), budget, out)
+		}
+	case "map":
+		// Delve returns map entries as alternating key and value children.
+		for i := 0; i+1 < len(v.Children); i += 2 {
+			key, val := v.Children[i], v.Children[i+1]
+			flattenVariable(val, fmt.Sprintf("%s[%s]", path, key.Value), budget, out)
+		}
+	case "ptr", "interface":
+		// FollowPointers means the single child is the pointee. It keeps the
+		// same path because that is what the agent would write to reach it.
+		for _, c := range v.Children {
+			if c.Kind.String() == "struct" || c.Kind.String() == "slice" || c.Kind.String() == "map" {
+				for _, gc := range c.Children {
+					flattenVariable(gc, path+"."+gc.Name, budget, out)
+				}
+			}
+		}
 	}
+}
+
+func isTruncated(v api.Variable) bool {
 	// Delve reports the real length separately from what it sent, which is the
 	// only way to tell "empty" from "truncated". An agent that cannot tell those
 	// apart draws the wrong conclusion from an empty slice.
 	if v.Len > int64(len(v.Children)) && len(v.Children) > 0 {
-		out.Truncated = true
+		return true
 	}
-	if v.Kind.String() == "string" && v.Len > int64(len(v.Value)) {
-		out.Truncated = true
-	}
-	for _, c := range v.Children {
-		out.Children = append(out.Children, toVariable(c, budget))
-	}
-	return out
+	return v.Kind.String() == "string" && v.Len > int64(len(v.Value))
 }
 
-// presentValue gives composite types a readable stand-in, because Delve leaves
-// Value empty for structs and slices and an empty string reads as "no value"
-// rather than "look at the children".
+// presentValue gives a value a readable one-line form. Delve leaves Value empty
+// for composites, and an empty string reads as "no value" rather than "look at
+// the fields", so composites are rendered rather than left blank.
 func presentValue(v api.Variable) string {
 	if v.Unreadable != "" {
 		return "<unreadable: " + v.Unreadable + ">"
@@ -62,7 +92,23 @@ func presentValue(v api.Variable) string {
 	}
 	switch v.Kind.String() {
 	case "struct":
-		return v.Type + "{...}"
+		// Inline fields: one readable line is cheaper for an agent than the same
+		// data spread over a dozen entries, and the fields are still listed
+		// separately for drilling down.
+		var sb strings.Builder
+		sb.WriteString(v.Type + "{")
+		for i, c := range v.Children {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			if i >= 8 {
+				sb.WriteString("...")
+				break
+			}
+			sb.WriteString(c.Name + ": " + shortValue(c))
+		}
+		sb.WriteString("}")
+		return sb.String()
 	case "slice", "array":
 		return v.Type + " len=" + strconv.FormatInt(v.Len, 10) + " cap=" + strconv.FormatInt(v.Cap, 10)
 	case "map":
@@ -71,8 +117,24 @@ func presentValue(v api.Variable) string {
 		if len(v.Children) == 0 {
 			return "nil"
 		}
+		return v.Type
 	}
 	return v.Value
+}
+
+// shortValue is the one-line form used inside a struct rendering, where nesting
+// further would defeat the point of having a single readable line.
+func shortValue(v api.Variable) string {
+	if v.Value != "" {
+		return v.Value
+	}
+	switch v.Kind.String() {
+	case "struct":
+		return v.Type + "{...}"
+	case "slice", "array", "map":
+		return v.Type + " len=" + strconv.FormatInt(v.Len, 10)
+	}
+	return "?"
 }
 
 func toFrames(frames []api.Stackframe) []model.Frame {

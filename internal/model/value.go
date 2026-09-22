@@ -36,13 +36,25 @@ func (b ValueBudget) WithDefaults() ValueBudget {
 	return b
 }
 
+// Variable is one value at one path, and the list of them is flat rather than
+// a tree.
+//
+// Two reasons, both about the agent rather than about elegance. A nested JSON
+// tree costs far more tokens than the same data as lines. And the flat form
+// makes Name a dotted path -- "it.Price", "items[2].Name" -- which is exactly
+// the expression to send to evaluate_expression next, so reading a value and
+// acting on it stop being separate steps.
+//
+// The shape also happens to be expressible as a JSON Schema, which a recursive
+// type is not.
 type Variable struct {
-	Name     string     `json:"name"`
-	Type     string     `json:"type,omitempty"`
-	Value    string     `json:"value"`
-	Kind     string     `json:"kind,omitempty"`
-	Children []Variable `json:"children,omitempty"`
-	// Truncated says the budget cut this value short, so the agent knows to ask
+	// Name is the full path from the frame's root, usable verbatim as an
+	// expression.
+	Name  string `json:"name"`
+	Type  string `json:"type,omitempty"`
+	Value string `json:"value"`
+	Kind  string `json:"kind,omitempty"`
+	// Truncated says a budget cut this value short, so the agent knows to ask
 	// for more rather than concluding the data is not there.
 	Truncated bool `json:"truncated,omitempty"`
 }
