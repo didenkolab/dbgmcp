@@ -56,6 +56,12 @@ type Backend interface {
 	Evaluate(ctx context.Context, frameIndex int, expr string, budget model.ValueBudget) (model.Variable, error)
 	Stack(ctx context.Context, unitID string, maxFrames int) ([]model.Frame, error)
 	ExecUnits(ctx context.Context, limit int) ([]model.ExecUnit, error)
+	// Trace records expressions at a set of probes and returns the transcript
+	// from one call, with the debugger doing the evaluating. Backends that
+	// cannot record without suspending still implement it; they declare
+	// NonSuspendingTrace=suspend_only and set PerturbsTiming on the result.
+	Trace(ctx context.Context, probes []model.Probe, timeout time.Duration) (model.Transcript, error)
+
 	Source(ctx context.Context, file string, line, contextLines int) (*model.SourceSpan, error)
 	// SetVariable changes a value in the running program.
 	SetVariable(ctx context.Context, frameIndex int, name, value string) error

@@ -2,6 +2,7 @@ package delve
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -160,4 +161,115 @@ func keysOf(m map[string]model.Variable) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestLiveTraceRecordsEveryIterationInOneCall is the differentiating claim of
+// this project, stated as a test: watching a loop must not cost a round trip
+// per iteration.
+func TestLiveTraceRecordsEveryIterationInOneCall(t *testing.T) {
+	b := startFixture(t, model.LaunchDebug)
+	ctx := context.Background()
+
+	tr, err := b.Trace(ctx, []model.Probe{{
+		Location: model.Location{Symbol: "main.lineTotal"},
+		Record:   []string{"it.Name", "it.Price", "it.Qty"},
+	}}, 60*time.Second)
+	if err != nil {
+		t.Fatalf("trace: %v", err)
+	}
+
+	// The cart has three items and the worker goroutine prices it again, so
+	// every call must appear -- not just the first.
+	if len(tr.Hits) < 3 {
+		t.Fatalf("expected at least three recorded hits, got %d (%s)", len(tr.Hits), tr.Message)
+	}
+	if tr.PerturbsTiming {
+		t.Error("Delve records without suspending, so the transcript must not claim otherwise")
+	}
+	if len(tr.ProbesNeverHit) != 0 {
+		t.Errorf("a probe that clearly fired was reported as never hit: %v", tr.ProbesNeverHit)
+	}
+
+	// The values are the point: each hit must carry the expressions asked for,
+	// keyed by the expression itself.
+	first := tr.Hits[0]
+	for _, expr := range []string{"it.Name", "it.Price", "it.Qty"} {
+		if _, ok := first.Values[expr]; !ok {
+			t.Errorf("hit is missing %q; it has %v", expr, first.Values)
+		}
+	}
+
+	// And the bug must be visible in the transcript alone: one item whose price
+	// exceeds 100, which is the one the code mishandles.
+	var expensive int
+	for _, h := range tr.Hits {
+		if h.Values["it.Price"] == "150" {
+			expensive++
+		}
+	}
+	if expensive == 0 {
+		t.Errorf("the transcript never shows the expensive item: %+v", tr.Hits)
+	}
+	t.Logf("%d hits recorded in one call, status=%s", len(tr.Hits), tr.Status)
+}
+
+// TestLiveTraceStopsAtItsBudget proves a trace is bounded: a probe with a hit
+// budget must not run the program to completion when it does not have to.
+func TestLiveTraceStopsAtItsBudget(t *testing.T) {
+	b := startFixture(t, model.LaunchDebug)
+	tr, err := b.Trace(context.Background(), []model.Probe{{
+		Location: model.Location{Symbol: "main.lineTotal"},
+		Record:   []string{"it.Price"},
+		MaxHits:  2,
+	}}, 60*time.Second)
+	if err != nil {
+		t.Fatalf("trace: %v", err)
+	}
+	if tr.Status != model.TraceCompleted {
+		t.Errorf("a satisfied budget should report 'completed', got %q (%s)", tr.Status, tr.Message)
+	}
+	if len(tr.Hits) != 2 {
+		t.Errorf("budget of 2 produced %d hits", len(tr.Hits))
+	}
+}
+
+// TestLiveTraceNamesProbesThatNeverFired keeps an empty transcript
+// distinguishable from a misplaced probe -- the same output, entirely
+// different problems.
+func TestLiveTraceNamesProbesThatNeverFired(t *testing.T) {
+	b := startFixture(t, model.LaunchDebug)
+	tr, err := b.Trace(context.Background(), []model.Probe{{
+		Location: model.Location{Symbol: "main.worker"},
+		Record:   []string{"items"},
+		MaxHits:  1,
+	}, {
+		// A real line in a function that does run, on a branch this program
+		// never takes -- the realistic shape of a probe that never fires.
+		Location: model.Location{File: filepath.Join(fixtureDir(t), "main.go"), Line: neverReachedLine(t)},
+		Record:   []string{"it.Qty"},
+		MaxHits:  1,
+	}}, 30*time.Second)
+	if err != nil {
+		t.Fatalf("trace: %v", err)
+	}
+	if len(tr.ProbesNeverHit) != 1 || !strings.Contains(tr.ProbesNeverHit[0], "main.go") {
+		t.Errorf("expected exactly the unused probe to be reported, got %v", tr.ProbesNeverHit)
+	}
+}
+
+// neverReachedLine finds the fixture's deliberately dead branch by its marker,
+// so the test does not break every time a line is inserted above it.
+func neverReachedLine(t *testing.T) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(fixtureDir(t), "main.go"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	for i, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "NEVER-REACHED") {
+			return i + 1
+		}
+	}
+	t.Fatal("the fixture no longer contains a NEVER-REACHED marker")
+	return 0
 }

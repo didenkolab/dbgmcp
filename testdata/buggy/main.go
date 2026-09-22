@@ -11,6 +11,9 @@ type Item struct {
 // lineTotal has the bug this fixture exists for: the quantity is dropped for
 // expensive items, so a cart is only wrong when it contains one.
 func lineTotal(it Item) int {
+	if it.Qty < 0 {
+		return 0 // NEVER-REACHED: no cart in this fixture has a negative quantity
+	}
 	if it.Price > 100 {
 		return it.Price
 	}

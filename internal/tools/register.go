@@ -132,6 +132,15 @@ func (r *Registry) Register(s *mcp.Server) {
 	}, r.getUnitAncestors)
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "trace_execution",
+		Annotations: mutating("Trace Execution"),
+		Description: "Record expressions at one or more places while the program runs, and return the whole transcript in ONE call. " +
+			"The debugger evaluates the expressions itself at every hit and resumes on its own, so watching a thousand iterations costs one call, not a thousand. " +
+			"Prefer this over set_breakpoint plus resume plus wait loops whenever you already know what you want to watch. " +
+			"Probes that never fired are listed separately, so an empty transcript is distinguishable from a misplaced probe.",
+	}, r.traceExecution)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_variables",
 		Annotations: readOnly("Get Variables"),
 		Description: "Read the arguments and locals of a stack frame. Arguments come first, because when a function returns the wrong answer, what went in is usually the more useful half.",
