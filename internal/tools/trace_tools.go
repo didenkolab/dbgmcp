@@ -2,8 +2,10 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/didenkolab/dbgmcp/internal/findings"
 	"github.com/didenkolab/dbgmcp/internal/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -26,6 +28,7 @@ type TraceOut struct {
 	Status         string           `json:"status" jsonschema:"'completed' when every probe met its budget, 'finished' when the program ended first, 'stopped' when something other than a probe halted it, 'timeout' otherwise."`
 	Hits           []model.TraceHit `json:"hits"`
 	ProbesNeverHit []string         `json:"probes_never_hit,omitempty"`
+	Findings       []model.Finding  `json:"findings,omitempty" jsonschema:"What the server noticed in the transcript. Each is an observation with the values it rests on, not a verdict about the cause."`
 	Mode           string           `json:"mode" jsonschema:"How the transcript was collected: 'buffered' (the debuggee never stopped), 'auto_continue' (it stopped at each hit but the debugger resumed it with no agent round-trip), 'suspend_only'."`
 	PerturbsTiming bool             `json:"perturbs_timing" jsonschema:"True when the debuggee was stopped at each hit. Decisive when chasing a race: a perturbed trace can hide or create the very timing you are investigating."`
 	Message        string           `json:"message"`
@@ -62,8 +65,16 @@ func (r *Registry) traceExecution(ctx context.Context, _ *mcp.CallToolRequest, i
 	if err != nil {
 		return fail[TraceOut]("%s", err.Error())
 	}
+	// Computed here rather than in a backend: the rules read the transcript and
+	// nothing else, so one implementation serves every runtime.
+	tr.Findings = findings.Analyse(tr, probes)
+
+	message := tr.Message
+	if len(tr.Findings) > 0 {
+		message += fmt.Sprintf(" %d thing(s) in this transcript looked worth pointing out; see findings, which are observations rather than conclusions.", len(tr.Findings))
+	}
 	return ok(TraceOut{
 		Status: string(tr.Status), Hits: tr.Hits, ProbesNeverHit: tr.ProbesNeverHit,
-		Mode: tr.Mode, PerturbsTiming: tr.PerturbsTiming, Message: tr.Message,
+		Findings: tr.Findings, Mode: tr.Mode, PerturbsTiming: tr.PerturbsTiming, Message: message,
 	})
 }

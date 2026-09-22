@@ -51,6 +51,9 @@ type Transcript struct {
 	Mode string `json:"mode"`
 	// PerturbsTiming is false only where the backend records without stopping
 	// the debuggee. An agent chasing a race needs to know which it got.
-	PerturbsTiming bool   `json:"perturbs_timing"`
-	Message        string `json:"message"`
+	PerturbsTiming bool `json:"perturbs_timing"`
+	// Findings is the server's own reading of the transcript above. It is
+	// computed from the transcript alone, so it is identical for every runtime.
+	Findings []Finding `json:"findings,omitempty"`
+	Message  string    `json:"message"`
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/didenkolab/dbgmcp/internal/findings"
 	"github.com/didenkolab/dbgmcp/internal/model"
 )
 
@@ -498,4 +499,71 @@ func TestLiveExplainValueShowsWhereTheWrongNumberCameFrom(t *testing.T) {
 	t.Logf("%s: %s -> %s in %d writes (%s); third write %s -> %s at %s:%d",
 		h.Expression, h.Initial, h.Final, len(h.Writes), h.Status,
 		h.Writes[2].From, h.Writes[2].To, h.Writes[2].File, h.Writes[2].Line)
+}
+
+// TestLiveFindingsSpotTheBugInTheTranscript closes the loop the whole CI story
+// depends on: a transcript nobody reads is not evidence, so the server has to
+// read it.
+func TestLiveFindingsSpotTheBugInTheTranscript(t *testing.T) {
+	b := startFixture(t, model.LaunchDebug)
+
+	main := filepath.Join(fixtureDir(t), "main.go")
+	probes := []model.Probe{{
+		// Inside the rotation loop, where the fixture's token quietly stops
+		// advancing. Probing inside the loop is what makes the series one value
+		// per iteration rather than one per call.
+		Location: model.Location{File: main, Line: lineContaining(t, main, "token = refreshToken")},
+		Record:   []string{"token"},
+	}}
+	tr, err := b.Trace(context.Background(), probes, 60*time.Second)
+	if err != nil {
+		t.Fatalf("trace: %v", err)
+	}
+	if len(tr.Hits) == 0 {
+		t.Fatalf("nothing recorded: %s", tr.Message)
+	}
+
+	got := findings.Analyse(tr, probes)
+	t.Logf("%d hits, %d findings", len(tr.Hits), len(got))
+	for _, f := range got {
+		t.Logf("  %s: %s", f.Kind, f.Detail)
+	}
+
+	// The fixture's token advances and then quietly stops. Nothing fails and
+	// nothing logs, so noticing it is the entire value of this layer.
+	var froze bool
+	for _, f := range got {
+		if f.Kind == model.FindingValueFroze && f.Expression == "token" {
+			froze = true
+		}
+	}
+	if !froze {
+		t.Errorf("the token stops advancing in this fixture and no finding said so: %+v", got)
+	}
+
+	// Every finding must carry the values it rests on. A claim without evidence
+	// is one a reader has to take on trust, which is the opposite of the point.
+	for _, f := range got {
+		if f.Kind != model.FindingProbeNeverHit && len(f.Evidence) == 0 {
+			t.Errorf("finding %s has no evidence: %+v", f.Kind, f)
+		}
+		if f.Detail == "" {
+			t.Errorf("finding %s has no detail", f.Kind)
+		}
+	}
+}
+
+func lineContaining(t *testing.T, file, needle string) int {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	for i, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, needle) {
+			return i + 1
+		}
+	}
+	t.Fatalf("%s no longer contains %q", file, needle)
+	return 0
 }

@@ -156,7 +156,8 @@ func (r *Registry) Register(s *mcp.Server) {
 			"The debugger evaluates the expressions itself at every hit and resumes on its own, so watching a thousand iterations costs one call, not a thousand. " +
 			"Check 'mode' and 'perturbs_timing' in the result: unless mode is 'buffered', the debuggee really did stop at each hit, so the saving is round trips rather than observer effect. " +
 			"Prefer this over set_breakpoint plus resume plus wait loops whenever you already know what you want to watch. " +
-			"Probes that never fired are listed separately, so an empty transcript is distinguishable from a misplaced probe.",
+			"Probes that never fired are listed separately, so an empty transcript is distinguishable from a misplaced probe. " +
+			"The reply also carries 'findings': things the server noticed in the transcript, each with the values it rests on. They are observations, not conclusions about the cause.",
 	}, r.traceExecution)
 
 	mcp.AddTool(s, &mcp.Tool{

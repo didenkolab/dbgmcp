@@ -20,6 +20,25 @@ func lineTotal(it Item) int {
 	return it.Price * it.Qty
 }
 
+// refreshToken mimics a credential that silently stops being renewed: it
+// advances for a while and then quietly stops. Nothing fails, nothing logs, and
+// the value is never obviously wrong -- which is the shape the findings rules
+// exist to notice, as distinct from a value that is simply incorrect.
+func refreshToken(n int) string {
+	if n < 3 {
+		return fmt.Sprintf("tok-%d", n)
+	}
+	return "tok-2" // the bug: stops advancing
+}
+
+func Rotate(times int) string {
+	token := ""
+	for i := 0; i < times; i++ {
+		token = refreshToken(i)
+	}
+	return token
+}
+
 func Subtotal(items []Item) int {
 	total := 0
 	for i := range items {
@@ -45,4 +64,5 @@ func main() {
 	out := make(chan int, 1)
 	go worker(out, cart)
 	fmt.Println("from worker:", <-out)
+	fmt.Println("token:", Rotate(8))
 }

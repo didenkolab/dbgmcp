@@ -73,6 +73,15 @@ debuggee at every hit and resumes it itself, so the transcript reports `mode: "a
 `perturbs_timing: true`. Genuinely non-stop tracing is `mode: "buffered"`, and it is not available
 here. An agent chasing a race reads that from the response rather than from this paragraph.
 
+**It reads the transcript for you.** `trace_execution` comes back with `findings`: a value that had
+been climbing and reversed, one that had always been present and arrived empty, one that changed
+every iteration and quietly stopped. Each carries the values it rests on, and each is an
+observation rather than a verdict -- the reader draws the conclusion.
+
+These notice an anomalous *shape*, not a wrong *value*. No rule can tell a wrong number from a
+right one without knowing the expected answer; comparing two runs is what does that, and it is not
+built yet.
+
 **It can see what the program printed.** `get_session_output` returns the debuggee's stdout and
 stderr, with a cursor for tailing. Outside an IDE there is no console, so without this a panic
 message -- often the shortest path to the answer -- would be invisible.
@@ -105,9 +114,14 @@ Stated plainly, so nobody mistakes the test suite for more than it is.
   asserted by a test, because the difference is one boolean deep inside teardown. Its output still
   goes wherever it was already going, so `get_session_output` has nothing to show for an attached
   session.
-- **No `findings`.** The design's analytics layer -- anomalies computed from a transcript, such
-  as a value that was monotonic and stopped being -- does not exist. `trace_execution` returns the
-  transcript; reading it is still the agent's job.
+- **`findings` sees shape, not correctness.** It notices a trend that broke, a value that became
+  empty, one that froze, a step out of line with the rest. It cannot tell a wrong number from a
+  right one, because nothing in a transcript says what the answer should have been.
+- **Repeated calls in one execution unit are spliced into one series.** Concurrent units are kept
+  apart, and a reset back to the starting value is not read as a reversal, but two sequential calls
+  of the same function still share a series.
+- **No `diff_runs`.** Comparing a passing run with a failing one is what turns "wrong value" into a
+  located bug, and it is the next thing to build.
 - **`trace_mode` is `auto_continue`, never `buffered`.** Genuinely non-stop tracing needs Delve's
   eBPF uprobes: Linux-only, privileged, and not enabled here. On macOS the gdbserial backend
   cannot do it at all.
