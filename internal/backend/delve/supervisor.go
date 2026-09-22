@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,11 @@ type supervisor struct {
 	// purpose: the most useful moment to read a program's last words is after
 	// it has died.
 	output outputBuffer
+
+	// attached records that the debuggee belongs to somebody else. Every
+	// teardown decision reads it, because getting this wrong means killing a
+	// service the agent was only supposed to look at.
+	attached bool
 }
 
 // launchArgs turns a neutral LaunchRequest into a dlv command line.
@@ -65,8 +71,10 @@ func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, redir
 		sub = "debug"
 	case model.LaunchExec:
 		sub = "exec"
+	case model.LaunchAttach:
+		sub = "attach"
 	default:
-		return nil, false, fmt.Errorf("unknown launch mode %q (expected test, debug or exec)", mode)
+		return nil, false, fmt.Errorf("unknown launch mode %q (expected test, debug, exec or attach)", mode)
 	}
 
 	out := []string{sub, "--headless", "--api-version=2", "--accept-multiclient",
@@ -76,14 +84,20 @@ func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, redir
 	// deletes it on exit -- but this server kills the process group, so Delve
 	// never gets to. Owning the path means the litter disappears with the
 	// directory we already remove, instead of accumulating in the user's repo.
-	if buildOutput != "" && mode != model.LaunchExec {
+	// Only the modes that actually compile something. exec takes the binary as
+	// given, and attach does not have one to build.
+	if buildOutput != "" && (mode == model.LaunchTest || mode == model.LaunchDebug) {
 		out = append(out, "--output="+buildOutput)
 	}
-	if redirects.stdout != "" {
-		out = append(out, "-r", "stdout:"+redirects.stdout)
-	}
-	if redirects.stderr != "" {
-		out = append(out, "-r", "stderr:"+redirects.stderr)
+	// An attached process already owns its streams; they go wherever they were
+	// going before the debugger arrived, and redirecting them is not ours to do.
+	if !mode.IsAttach() {
+		if redirects.stdout != "" {
+			out = append(out, "-r", "stdout:"+redirects.stdout)
+		}
+		if redirects.stderr != "" {
+			out = append(out, "-r", "stderr:"+redirects.stderr)
+		}
 	}
 	if target != "" {
 		out = append(out, target)
@@ -97,7 +111,10 @@ func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, redir
 		out = append(out, "--")
 		out = append(out, passthrough...)
 	}
-	return out, mode != model.LaunchExec, nil
+	// Delve rebuilds with the optimiser and inliner off for the modes where it
+	// does the building. exec and attach get whatever the binary already is.
+	compiledByDelve := mode == model.LaunchTest || mode == model.LaunchDebug
+	return out, compiledByDelve, nil
 }
 
 func (s *supervisor) start(ctx context.Context, dlvPath string, req model.LaunchRequest) (bool, error) {
@@ -119,7 +136,11 @@ func (s *supervisor) start(ctx context.Context, dlvPath string, req model.Launch
 		}
 	}
 
-	args, optimisationsDisabled, err := launchArgs(req.Mode, req.Target, socket, buildOutput, redirects, req.Args, req.TestRun)
+	target := req.Target
+	if req.Mode.IsAttach() {
+		target = strconv.Itoa(req.PID)
+	}
+	args, optimisationsDisabled, err := launchArgs(req.Mode, target, socket, buildOutput, redirects, req.Args, req.TestRun)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		return false, err
@@ -146,6 +167,7 @@ func (s *supervisor) start(ctx context.Context, dlvPath string, req model.Launch
 
 	s.mu.Lock()
 	s.cmd, s.tmpDir, s.stderr = cmd, tmpDir, &strings.Builder{}
+	s.attached = req.Mode.IsAttach()
 	s.mu.Unlock()
 
 	ready := s.scanForReady(stderrPipe)
@@ -175,8 +197,19 @@ func (s *supervisor) start(ctx context.Context, dlvPath string, req model.Launch
 	s.conn = conn
 	// NewClientFromConn rather than NewClient: rpc2.NewClient dials TCP only and
 	// calls log.Fatal on failure, which would take this whole server down.
-	s.client = rpc2.NewClientFromConn(conn)
+	client := rpc2.NewClientFromConn(conn)
+	s.client = client
 	s.mu.Unlock()
+
+	// Delve announces its API before it has finished taking hold of the target,
+	// so "listening" is not "working": attaching to a pid that does not exist
+	// gets this far and only then fails. Without this check the agent is handed
+	// a session it can set breakpoints into and never hear from again.
+	if _, err := client.GetState(); err != nil {
+		captured := s.capturedStderr()
+		s.kill()
+		return false, fmt.Errorf("Delve started but could not take control of the target: %w\n%s", err, captured)
+	}
 
 	return optimisationsDisabled, nil
 }
@@ -235,14 +268,19 @@ func (s *supervisor) kill() {
 	}
 	s.stopped = true
 	cmd, conn, client, tmpDir := s.cmd, s.conn, s.client, s.tmpDir
+	attached := s.attached
 	s.client, s.conn = nil, nil
 	s.mu.Unlock()
 
-	// Ask politely first: Detach(true) lets Delve tear the debuggee down the way
-	// it knows how. Its failure is not interesting -- the group kill follows.
+	// Detach(kill) is the whole safety question. For a process we started, true
+	// tears it down the way Delve knows how. For one we attached to, killing it
+	// would take down somebody else's running service because an agent finished
+	// looking at it, so the flag is the inverse of "attached" and never a
+	// constant.
 	if client != nil {
+		killDebuggee := !attached
 		done := make(chan struct{})
-		go func() { defer func() { recover(); close(done) }(); _ = client.Detach(true) }()
+		go func() { defer func() { recover(); close(done) }(); _ = client.Detach(killDebuggee) }()
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):
@@ -252,7 +290,11 @@ func (s *supervisor) kill() {
 		_ = conn.Close()
 	}
 	if cmd != nil && cmd.Process != nil {
-		killProcessGroup(cmd.Process.Pid)
+		// Only the process group we created. When attached, the debuggee is not
+		// in it -- and a group kill here would be the bug this guards against.
+		if !attached {
+			killProcessGroup(cmd.Process.Pid)
+		}
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	}

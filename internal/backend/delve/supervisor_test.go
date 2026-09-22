@@ -73,3 +73,25 @@ func TestLaunchArgsRedirectBothDebuggeeStreamsToSeparateFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestLaunchArgsAttachTakesAPidAndTouchesNothingElse(t *testing.T) {
+	// Attach must not build anything and must not redirect the streams of a
+	// process that already owns them.
+	args, optimisationsDisabled, err := launchArgs(model.LaunchAttach, "4242", "/tmp/s.sock", "/tmp/o.bin",
+		redirectPaths{stdout: "/tmp/t/out", stderr: "/tmp/t/err"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := joined(args)
+	if args[0] != "attach" || args[len(args)-1] != "4242" {
+		t.Errorf("attach did not receive the pid as its argument: %s", got)
+	}
+	for _, forbidden := range []string{"--output", "stdout:", "stderr:"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("attach must not use %q: %s", forbidden, got)
+		}
+	}
+	if optimisationsDisabled {
+		t.Error("attach debugs the binary as it is; nothing was rebuilt")
+	}
+}

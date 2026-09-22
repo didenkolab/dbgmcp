@@ -31,8 +31,10 @@ func (r *Registry) Register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "start_debug_session",
 		Annotations: mutating("Start Debug Session"),
-		Description: "Build and launch a Go target under the debugger, stopped before its first instruction so breakpoints can be set first. " +
-			"Use mode=test for a go test run, mode=debug for a main package, mode=exec for an already-built binary. " +
+		Description: "Put a Go program under the debugger, stopped so breakpoints can be set before anything runs. " +
+			"mode=test for a go test run, mode=debug for a main package, mode=exec for an already-built binary, " +
+			"mode=attach with a pid to take control of a process that is already running. " +
+			"Attaching suspends a live process: resume it promptly, and note that stopping the session leaves it running rather than killing it. " +
 			"Returns the backend's capabilities: plan against those rather than discovering limits by failing.",
 	}, r.startDebugSession)
 

@@ -26,15 +26,24 @@ const (
 	StopUnknown    StopReason = "unknown"
 )
 
-// LaunchMode covers the three ways a Go target can be put under a debugger.
-// Attach is absent on purpose: v1 does not attach to processes it did not start.
+// LaunchMode covers the ways a Go target can be put under a debugger.
 type LaunchMode string
 
 const (
 	LaunchTest  LaunchMode = "test"
 	LaunchDebug LaunchMode = "debug"
 	LaunchExec  LaunchMode = "exec"
+	// LaunchAttach takes control of a process this server did not start. It is
+	// different in kind from the others, not just in degree: the process
+	// belongs to somebody else, so detaching must leave it running and its
+	// output stays wherever it was already going.
+	LaunchAttach LaunchMode = "attach"
 )
+
+// IsAttach reports whether a session took over a process rather than starting
+// one. Several safety decisions hang off this, so it is asked by name rather
+// than compared inline.
+func (m LaunchMode) IsAttach() bool { return m == LaunchAttach }
 
 // LaunchRequest is what an agent asks for. WorkDir anchors every relative path
 // in the session, including the ones in breakpoint locations.
@@ -46,6 +55,8 @@ type LaunchRequest struct {
 	Env     map[string]string `json:"env,omitempty"`
 	// TestRun is the -test.run filter, meaningful only for LaunchTest.
 	TestRun string `json:"test_run,omitempty"`
+	// PID is the process to attach to, meaningful only for LaunchAttach.
+	PID int `json:"pid,omitempty"`
 }
 
 type Session struct {

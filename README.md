@@ -88,8 +88,12 @@ Stated plainly, so nobody mistakes the test suite for more than it is.
 - **Go only.** The backend interface and the capability model are built to take a second backend
   (DAP for Python, Node, Rust; CDP for browsers), but none exists yet, and an abstraction with one
   implementation is usually wrong. Treat the interface as unproven.
-- **Launch only.** `test`, `debug` and `exec`. There is no attaching to a process this server did
-  not start, and no remote or containerised target. `PathMapping` is modelled but not exercised.
+- **Local only.** `test`, `debug`, `exec` and `attach` all work, but only against processes on this
+  machine. No remote or containerised target; `PathMapping` is modelled and not exercised.
+- **Attaching suspends a live process.** Stopping the session detaches without killing it -- that is
+  asserted by a test, because the difference is one boolean deep inside teardown. Its output still
+  goes wherever it was already going, so `get_session_output` has nothing to show for an attached
+  session.
 - **No `findings`.** The design's analytics layer -- anomalies computed from a transcript, such
   as a value that was monotonic and stopped being -- does not exist. `trace_execution` returns the
   transcript; reading it is still the agent's job.

@@ -39,9 +39,10 @@ func ok[T any](out T) (*mcp.CallToolResult, T, error) { return nil, out, nil }
 // ---------- session lifecycle ----------
 
 type StartIn struct {
-	Mode    string            `json:"mode" jsonschema:"How to launch: 'test' to run go test, 'debug' to build and run a main package, 'exec' to run an already-built binary."`
+	Mode    string            `json:"mode" jsonschema:"'test' runs go test, 'debug' builds and runs a main package, 'exec' runs an already-built binary, 'attach' takes control of a process that is already running."`
 	Target  string            `json:"target" jsonschema:"Package path for test/debug (for example ./internal/billing or .), or the binary path for exec."`
 	WorkDir string            `json:"work_dir" jsonschema:"Absolute path of the directory to run in. All relative paths and breakpoint files resolve against it."`
+	PID     int               `json:"pid,omitempty" jsonschema:"Process id to attach to. Required for mode=attach and ignored otherwise."`
 	TestRun string            `json:"test_run,omitempty" jsonschema:"Only for mode=test: the -test.run regular expression selecting which tests to run."`
 	Args    []string          `json:"args,omitempty" jsonschema:"Arguments passed to the program itself."`
 	Env     map[string]string `json:"env,omitempty" jsonschema:"Extra environment variables for the debuggee."`
@@ -66,8 +67,12 @@ func (r *Registry) startDebugSession(ctx context.Context, _ *mcp.CallToolRequest
 	mode := model.LaunchMode(in.Mode)
 	switch mode {
 	case model.LaunchTest, model.LaunchDebug, model.LaunchExec:
+	case model.LaunchAttach:
+		if in.PID <= 0 {
+			return fail[StartOut]("mode=attach needs a pid. Find it with `pgrep -f <name>` or `ps`.")
+		}
 	default:
-		return fail[StartOut]("Unknown mode %q. Use 'test', 'debug' or 'exec'.", in.Mode)
+		return fail[StartOut]("Unknown mode %q. Use 'test', 'debug', 'exec' or 'attach'.", in.Mode)
 	}
 	if in.WorkDir == "" {
 		return fail[StartOut]("Missing required parameter: work_dir")
@@ -86,7 +91,7 @@ func (r *Registry) startDebugSession(ctx context.Context, _ *mcp.CallToolRequest
 	b := delve.New()
 	req := model.LaunchRequest{
 		Mode: mode, Target: in.Target, WorkDir: in.WorkDir,
-		TestRun: in.TestRun, Args: in.Args, Env: env,
+		TestRun: in.TestRun, Args: in.Args, Env: env, PID: in.PID,
 	}
 	if err := b.Launch(ctx, req); err != nil {
 		return fail[StartOut]("%s", err.Error())
@@ -102,9 +107,20 @@ func (r *Registry) startDebugSession(ctx context.Context, _ *mcp.CallToolRequest
 		SessionID: sess.ID, Backend: b.Name(), State: string(model.StatePaused),
 		OptimisationsDisabled: sess.OptimisationsDisabled,
 		Capabilities:          b.Capabilities(),
-		Message: "The target is loaded and stopped before its first instruction. " +
-			"Set breakpoints now, then call resume_execution followed by wait_for_pause.",
+		Message:               startMessage(mode),
 	})
+}
+
+// startMessage says what is actually true of this session, because the two
+// cases differ in ways an agent must not have to infer.
+func startMessage(mode model.LaunchMode) string {
+	if mode.IsAttach() {
+		return "Attached, and the process is suspended. It belongs to someone else: it was not started here, " +
+			"stop_debug_session will leave it running rather than kill it, and its output goes wherever it already went, " +
+			"so get_session_output has nothing to show. Resume it promptly -- everything it serves is stopped meanwhile."
+	}
+	return "The target is loaded and stopped before its first instruction. " +
+		"Set breakpoints now, then call resume_execution followed by wait_for_pause."
 }
 
 type SessionRef struct {

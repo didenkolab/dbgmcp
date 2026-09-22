@@ -76,6 +76,11 @@ func (b *Backend) Capabilities() backend.Capabilities {
 }
 
 func (b *Backend) Launch(ctx context.Context, req model.LaunchRequest) error {
+	if req.Mode.IsAttach() {
+		if err := checkProcessExists(req.PID); err != nil {
+			return err
+		}
+	}
 	info, err := Resolve()
 	if err != nil {
 		return err
@@ -98,7 +103,7 @@ func (b *Backend) Launch(ctx context.Context, req model.LaunchRequest) error {
 // optimiser and inliner off. It matters to the agent: when true, the binary
 // under the debugger is not the binary that ships.
 func (b *Backend) OptimisationsDisabled(mode model.LaunchMode) bool {
-	return mode != model.LaunchExec
+	return mode == model.LaunchTest || mode == model.LaunchDebug
 }
 
 func (b *Backend) Stop(context.Context) error {
