@@ -13,6 +13,9 @@ its native RPC API. It runs anywhere Go runs -- a terminal, a container, CI -- a
 agent --MCP stdio--> dbgmcp --rpc2 over unix socket--> dlv --headless --> your program
 ```
 
+**New here?** [docs/USING.md](docs/USING.md) covers both this and the IDE plugin: what to install,
+which to reach for, and the three things that decide how long a session takes.
+
 ## Install
 
 ```bash
