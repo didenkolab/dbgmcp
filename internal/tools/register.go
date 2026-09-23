@@ -161,6 +161,17 @@ func (r *Registry) Register(s *mcp.Server) {
 	}, r.traceExecution)
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "diff_runs",
+		Annotations: mutating("Diff Runs"),
+		Description: "Run the same code twice under the same probes and return the first point where the two runs stopped agreeing. " +
+			"Use this when one input works and another does not, or when a test passes sometimes: nothing in a single transcript says what a value should have been, and a second run does. " +
+			"It starts, traces and tears down both runs itself, so the whole comparison is one call. " +
+			"Give the differing input in run_a and run_b -- conventionally the passing run first, so divergences read as what the failing run did differently. " +
+			"The reply names the earliest divergence and its kind: a differing value, a value present in one run and absent in the other, a differing number of hits, or a probe reached in only one run. " +
+			"The later divergences are usually consequences of the first. Read 'compared' before trusting agreement: zero means nothing was lined up, not that the runs matched.",
+	}, r.diffRuns)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_debug_session_status",
 		Annotations: readOnly("Get Debug Session Status"),
 		Description: "Report where the session is right now without waiting: location, stack, variables, source and the debuggee's recent output. " +

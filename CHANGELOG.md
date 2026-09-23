@@ -3,6 +3,30 @@
 All notable changes are recorded here. This project follows [semantic
 versioning](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- **`diff_runs`** — run the same probes over two runs and report the first point where
+  they stopped agreeing. Starts, traces and tears down both runs itself, so the whole
+  comparison is one call. It separates a differing value from a value present in one run
+  and absent in the other, from a differing number of hits, from a probe reached in only
+  one run, because those send a reader to different places. This is what `findings`
+  structurally cannot do: nothing in a single transcript says what a value should have
+  been, and a second run does.
+- **`dbgmcp diff`** — the same comparison as a command, for a pipeline with no
+  conversation to hold. Writes a markdown or JSON report under the caller's own labels
+  for the two runs. Exits zero even when the runs diverge, like `dbgmcp trace`.
+- A contract test over this server's tool surface and over the tool names shared with
+  the JetBrains debugger plugin, so adding or renaming a tool here cannot be silent.
+
+### Notes
+
+- `diff_runs` never compares execution unit ids between runs. A goroutine or thread id is
+  assigned within a single run, so units are aligned by the order they reached the probe
+  instead. With one unit that is exact; where several reached it, the reply reports the
+  matching as by arrival rather than presenting it as settled.
+
 ## [0.1.0] - 2026-09-23
 
 First release. Everything below is new.

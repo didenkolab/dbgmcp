@@ -94,6 +94,26 @@ and `get_stack_trace` spends calls on data you have.
 **Do not stop in a loop.** `trace_execution` records the expressions you name at every hit and
 returns the whole run. A thousand iterations cost one call rather than a thousand.
 
+**When you have a working case, compare instead of hunting.** `diff_runs` takes an input that works
+and one that does not, runs both under the same probes and returns the first place they stopped
+agreeing. Reach for it the moment you can name a passing case: a single transcript can show you a
+value, but only a second run can tell you the value is wrong.
+
+```json
+{
+  "mode": "test", "target": "./internal/pricing", "work_dir": "/abs/path",
+  "run_a": {"label": "passing", "test_run": "TestOrdinaryCustomer"},
+  "run_b": {"label": "failing", "test_run": "TestLoyalCustomer"},
+  "probes": [{"file": "/abs/path/internal/pricing/price.go", "line": 35, "record": ["price"]}]
+}
+```
+
+Read three fields before acting on the answer. `first` is the divergence to look at — the rest are
+usually its consequences. `compared` being zero means nothing was lined up, which is not the same as
+the runs agreeing. And `ambiguous_units`, when present, means more than one goroutine or thread
+reached a probe, so the two runs' units were matched by the order they arrived rather than by
+identity: treat a divergence there as a lead, not a finding.
+
 ## Without an agent
 
 A failing test in CI has no conversation to hold:
@@ -115,6 +135,21 @@ A suite kept behind build tags needs them named, or it cannot be built at all:
 dbgmcp trace -tags "integration devsecrets" -test TestCharge \
   -probe internal/billing/charge.go:88=amount
 ```
+
+The comparison has the same shape. This is the one to attach to a review when a test passes in one
+place and fails in another:
+
+```bash
+dbgmcp diff -dir . -target ./internal/pricing \
+  -test-a TestOrdinaryCustomer -label-a passing \
+  -test-b TestLoyalCustomer    -label-b failing \
+  -probe internal/pricing/price.go:35=price \
+  -format md -out diff.md
+```
+
+The report leads with the first divergence and the values on both sides, under your own labels. Test
+shuffling is always off for a diff and is not a flag — two runs of a shuffled suite run different
+tests, so the divergence found would be the shuffle.
 
 ## When it does not work
 

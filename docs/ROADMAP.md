@@ -52,7 +52,7 @@ tool rather than less:
 | Pain | What answers it | Status |
 |---|---|---|
 | "Cannot reproduce it" | Evidence captured at the moment of observation: attach to the stand, probes in the service's own code while QA drives the UI | attach works locally; stands need path mapping |
-| "Root cause takes hours" | `explain_value`, `diff_runs`, `findings` | `explain_value` done; the other two are next |
+| "Root cause takes hours" | `explain_value`, `diff_runs`, `findings` | all three done |
 | "Flaky tests" | Honestly, the weakest case — see below | partial |
 | "Post-release regressions" | `attach` to a live process, goroutine/thread state, ancestry | works locally |
 
@@ -84,12 +84,18 @@ This is what makes the CI integration worth anything. A transcript nobody reads 
 evidence. Language-neutral by construction, because findings are computed from the
 transcript rather than from the debugger.
 
-### 3. `diff_runs` — passing input against failing input
+### 3. `diff_runs` — passing input against failing input — **done**
 
-Run twice under the same probes, return the first point where the transcripts diverge.
-Directly attacks "root cause takes hours", and is the only honest lever available
-against flaky tests: compare a passing run with a failing one rather than trying to
-watch the race.
+Runs twice under the same probes and returns the first point where the transcripts
+diverge, separating a differing value from a value that was absent, from a differing
+number of hits, from a probe reached in only one run. Available as the `diff_runs` tool
+and as `dbgmcp diff`.
+
+What it does not do, stated because the limit decides whether it can be trusted: unit
+ids are per-run and are never compared across runs, so units are matched by the order
+they arrived at the probe. With one unit that is exact; with several it is a guess, and
+the reply says so in `ambiguous_units`. That keeps it honest on concurrent code rather
+than confidently wrong, but it also means it is still not the answer to a race.
 
 ### 4. Non-interactive CI mode
 

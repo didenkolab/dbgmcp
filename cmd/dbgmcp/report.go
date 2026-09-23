@@ -140,3 +140,102 @@ func escapeCell(v string) string {
 	}
 	return v
 }
+
+// renderDiffMarkdown writes the comparison a reviewer opens.
+//
+// The first divergence leads, alone, because it is the answer most of the time
+// and the rest are usually its consequences. Everything that would make the
+// claim unsafe to act on -- nothing compared, a probe that never fired, units
+// matched by arrival rather than identity -- is stated next to it rather than in
+// a footnote.
+func renderDiffMarkdown(req model.LaunchRequest, labelA, labelB string, left, right model.Transcript, c model.Comparison) string {
+	var b strings.Builder
+
+	b.WriteString("# Two runs compared\n\n")
+	fmt.Fprintf(&b, "`%s` in `%s` — **%s** against **%s**\n\n", req.Mode, req.Target, labelA, labelB)
+
+	if c.First == nil {
+		if c.Compared == 0 {
+			b.WriteString("## Nothing was compared\n\n")
+			b.WriteString("Neither run recorded anything at these probes, so this says nothing about\n")
+			b.WriteString("either run. Check the probe locations before reading it as agreement.\n\n")
+		} else {
+			fmt.Fprintf(&b, "## No divergence in %d readings\n\n", c.Compared)
+			b.WriteString("The two runs agreed everywhere they were watched. Whatever differs between\n")
+			b.WriteString("them is not visible at these probes — move them, or record more.\n\n")
+		}
+	} else {
+		b.WriteString("## First divergence\n\n")
+		d := *c.First
+		fmt.Fprintf(&b, "**%s** — %s\n\n", d.Kind, withLabels(d.Detail, labelA, labelB))
+		if d.File != "" {
+			fmt.Fprintf(&b, "`%s:%d`", d.File, d.Line)
+			if d.Unit != "" {
+				fmt.Fprintf(&b, ", unit %s", d.Unit)
+			}
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "| | %s | %s |\n|---|---|---|\n", labelA, labelB)
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n\n", d.Expression, escapeCell(d.Left), escapeCell(d.Right))
+		if len(d.Evidence) > 0 {
+			fmt.Fprintf(&b, "Either side of it (`%s` | `%s`):\n\n```\n", labelA, labelB)
+			for _, line := range d.Evidence {
+				b.WriteString(line + "\n")
+			}
+			b.WriteString("```\n\n")
+		}
+	}
+
+	if len(c.Divergences) > 1 {
+		fmt.Fprintf(&b, "## The other %d\n\n", len(c.Divergences)-1)
+		b.WriteString("Usually consequences of the first. Listed so the first can be checked\n")
+		b.WriteString("against them rather than taken on trust.\n\n")
+		b.WriteString("| kind | where | expression | " + labelA + " | " + labelB + " |\n|---|---|---|---|---|\n")
+		for _, d := range c.Divergences[1:] {
+			where := "—"
+			if d.File != "" {
+				where = fmt.Sprintf("%s:%d", shortPath(d.File), d.Line)
+			}
+			fmt.Fprintf(&b, "| %s | %s | `%s` | %s | %s |\n",
+				d.Kind, where, d.Expression, escapeCell(d.Left), escapeCell(d.Right))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("## How it was recorded\n\n")
+	for _, run := range []struct {
+		label string
+		t     model.Transcript
+	}{{labelA, left}, {labelB, right}} {
+		fmt.Fprintf(&b, "- **%s**: status `%s`, %d hit(s)", run.label, run.t.Status, len(run.t.Hits))
+		if len(run.t.ProbesNeverHit) > 0 {
+			fmt.Fprintf(&b, " — **never fired**: %s, so silence there is a misplaced probe rather than absent data",
+				strings.Join(run.t.ProbesNeverHit, ", "))
+		}
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(&b, "- readings compared: %d\n", c.Compared)
+	if c.PerturbsTiming {
+		b.WriteString("- the debuggee stopped at every hit in at least one run, so a difference that depends on timing may be an effect of the measurement\n")
+	}
+	for _, note := range c.AmbiguousUnits {
+		fmt.Fprintf(&b, "- **matched by arrival**: %s. Two runs can interleave differently, which makes a divergence there weaker evidence.\n", note)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// withLabels puts the reader's own names for the two runs into prose that the
+// comparison necessarily wrote in neutral terms -- diffruns has no business
+// knowing what a caller calls its runs.
+//
+// The phrases replaced here are fixed by the comparison, and
+// TestEveryDetailUsesThePhrasesTheReportSubstitutes fails if one of them is ever
+// worded differently, which is what stops this from silently doing nothing.
+func withLabels(detail, labelA, labelB string) string {
+	detail = strings.ReplaceAll(detail, "the first run", "`"+labelA+"`")
+	detail = strings.ReplaceAll(detail, "the second run", "`"+labelB+"`")
+	detail = strings.ReplaceAll(detail, "the first", "`"+labelA+"`")
+	detail = strings.ReplaceAll(detail, "the second", "`"+labelB+"`")
+	return detail
+}

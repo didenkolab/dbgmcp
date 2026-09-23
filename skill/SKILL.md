@@ -69,6 +69,26 @@ distinction is the whole answer.
 `probes_never_hit` tells you a probe never fired, which is a different problem from a probe that
 fired and found nothing.
 
+**Comparing a working case with a broken one:** `diff_runs`. It starts, traces and tears down both
+runs itself and returns the first place they stopped agreeing -- one call, not two sessions and a
+comparison you do yourself.
+
+```json
+{"mode": "test", "target": "./internal/pricing", "work_dir": "/abs/path",
+ "run_a": {"label": "passing", "test_run": "TestOrdinaryCustomer"},
+ "run_b": {"label": "failing", "test_run": "TestLoyalCustomer"},
+ "probes": [{"symbol": "pricing.FinalPrice", "record": ["price"]}]}
+```
+
+Use it as soon as you can name a case that works. `findings` reads the shape of one run; it can
+never tell you a number is wrong, because nothing in a single transcript says what the number
+should have been. A second run does.
+
+In the reply, `first` is what to look at -- the later divergences are usually its consequences.
+`compared: 0` means nothing was lined up, which is not the runs agreeing. And if `ambiguous_units`
+is present, several goroutines or threads reached a probe, so the runs' units were matched by
+arrival order rather than identity: that is a lead, not a finding.
+
 **Reaching one specific iteration:** a condition or a hit count, not a hundred resumes.
 
 ```json
@@ -126,3 +146,6 @@ so you see what actually took effect. Preview with `evaluate_expression` first.
 
 That is four to six calls. If you find yourself on the twentieth, stop and use
 `trace_execution` or a condition instead.
+
+If you already have a case that produces the right value, skip all of it: `diff_runs` between the
+two is one call and answers where they part.

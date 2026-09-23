@@ -39,22 +39,9 @@ func (r *Registry) traceExecution(ctx context.Context, _ *mcp.CallToolRequest, i
 	if err != nil {
 		return fail[TraceOut]("%s", err.Error())
 	}
-	if len(in.Probes) == 0 {
-		return fail[TraceOut]("trace_execution needs at least one probe.")
-	}
-
-	probes := make([]model.Probe, 0, len(in.Probes))
-	for i, p := range in.Probes {
-		if p.Symbol == "" && p.File == "" {
-			return fail[TraceOut]("Probe %d needs either symbol, or file and line.", i)
-		}
-		if len(p.Record) == 0 {
-			return fail[TraceOut]("Probe %d records nothing. Give it at least one expression, or use set_breakpoint instead.", i)
-		}
-		probes = append(probes, model.Probe{
-			Location: model.Location{File: p.File, Line: p.Line, Symbol: p.Symbol},
-			Record:   p.Record, MaxHits: p.MaxHits,
-		})
+	probes, unusable := buildProbes(in.Probes, "trace_execution")
+	if unusable != "" {
+		return fail[TraceOut]("%s", unusable)
 	}
 
 	timeout := 60 * time.Second

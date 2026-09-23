@@ -104,6 +104,21 @@ dbgmcp trace -tags "integration devsecrets" -test TestCharge \
 Test-order randomisation is switched off by default, because a shuffled run puts a different test
 where the probe expects one. Pass `-shuffle` to leave it on.
 
+Comparing two runs is a command too, and it is the one to reach for when a test passes in one place
+and fails in another:
+
+```bash
+dbgmcp diff -dir . -target ./internal/pricing \
+  -test-a TestOrdinaryCustomer -label-a passing \
+  -test-b TestLoyalCustomer    -label-b failing \
+  -probe internal/pricing/price.go:35=price \
+  -format md -out diff.md
+```
+
+The labels are the reader's, and they appear in the report rather than "the first run". Randomisation
+is always off here and is not a flag: two runs of a shuffled suite execute different tests, so the
+divergence found would be the shuffle.
+
 It re-runs the target under the debugger, records the expressions, reads the transcript and writes a
 report: what was noticed first, the values it rests on next, the full table last. It exits zero even
 when it notices something -- the failing test fails the build, not the diagnostic, because a
@@ -115,8 +130,23 @@ every iteration and quietly stopped. Each carries the values it rests on, and ea
 observation rather than a verdict -- the reader draws the conclusion.
 
 These notice an anomalous *shape*, not a wrong *value*. No rule can tell a wrong number from a
-right one without knowing the expected answer; comparing two runs is what does that, and it is not
-built yet.
+right one without knowing the expected answer -- which is what the next tool is for.
+
+**`diff_runs`: two runs, and the first place they part.** Give it an input that works and one that
+does not, with the same probes, and it starts, traces and tears down both runs itself, then reports
+the earliest point they stopped agreeing. One call.
+
+The passing run is the specification. `findings` cannot supply one -- nothing in a single transcript
+says what a value should have been -- so this is the tool that turns "the number is wrong" into a
+file and a line. It separates four kinds of divergence, because they send a reader to different
+places: a differing value, a value present in one run and absent in the other (usually a branch not
+taken), a differing number of hits (a different path), and a probe reached in only one run.
+
+Two things it refuses to fake. Execution units are matched between the runs by the order they
+arrived at a probe, never by id -- a goroutine id is assigned within one run, and comparing ids
+across two reports every single series as missing. Where more than one unit reached a probe, that
+matching is a guess and the reply says so in `ambiguous_units`, because a debugger that is
+confidently wrong about a race is worse than one that says it cannot tell.
 
 **It can see what the program printed.** `get_session_output` returns the debuggee's stdout and
 stderr, with a cursor for tailing. Outside an IDE there is no console, so without this a panic
@@ -127,11 +157,12 @@ and every test function by name. An IDE plugin can list run configurations becau
 them; with no IDE there is nothing to list, so they are derived from the source instead -- without
 executing anything.
 
-**Tool names match our [JetBrains debugger plugin](https://github.com/didenkolab/jetbrains-debugger-mcp)** wherever the semantics match, so one
-agent and one companion skill work with an IDE and without one. Twenty tools are shared verbatim.
+**Tool names match our [JetBrains debugger plugin](https://github.com/didenkolab/jetbrains-debugger-mcp-plugin)** wherever the semantics match, so one
+agent and one companion skill work with an IDE and without one. Twenty-four tools are shared verbatim.
 The rest divide honestly: the plugin has what only an IDE can do (`find_usages`, the quick fixes,
 run configurations), and this server has what only a debugger it drives itself can do
-(`describe_backend`, `explain_value`, `set_watchpoint`, `get_unit_ancestors`).
+(`describe_backend`, `explain_value`, `set_watchpoint`, `get_unit_ancestors`, `diff_runs`,
+`list_debug_targets`).
 
 ## Known gaps
 
@@ -163,8 +194,13 @@ Stated plainly, so nobody mistakes the test suite for more than it is.
 - **Repeated calls in one execution unit are spliced into one series.** Concurrent units are kept
   apart, and a reset back to the starting value is not read as a reversal, but two sequential calls
   of the same function still share a series.
-- **No `diff_runs`.** Comparing a passing run with a failing one is what turns "wrong value" into a
-  located bug, and it is the next thing to build.
+- **`diff_runs` matches execution units by arrival, not identity.** A unit id is assigned within a
+  run, so the two runs' ids cannot be compared; units are aligned by the order they reached the
+  probe instead. With one unit that is exact. With several it is a guess, reported in
+  `ambiguous_units` rather than presented as settled, because two runs interleave differently.
+- **`diff_runs` sees only what the probes see.** Two runs that agree everywhere they are watched are
+  reported as agreeing at those probes, not as identical, and `compared: 0` means nothing was lined
+  up rather than that the runs matched.
 - **`trace_mode` is `auto_continue`, never `buffered`.** Genuinely non-stop tracing needs Delve's
   eBPF uprobes: Linux-only, privileged, and not enabled here. On macOS the gdbserial backend
   cannot do it at all.
