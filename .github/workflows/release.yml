@@ -53,13 +53,21 @@ jobs:
           python3 -m venv .venv-test
           .venv-test/bin/pip install -q debugpy
 
-      # The timeout is deliberately far inside the runner's own kill: when it
-      # fires, go test dumps every goroutine's stack, which names the test and
-      # where it is blocked. A job killed by the runner instead uploads no log
-      # at all, which is how the macOS leg managed to fail repeatedly without
-      # leaving anything to read. The whole suite takes under three minutes on a
-      # healthy runner, so ten is slack, not a budget.
+      # Two timeouts, because they fail differently and only one of them keeps
+      # the evidence.
+      #
+      # go test's own -timeout panics the test binary and dumps every goroutine's
+      # stack, which names the blocked test. But it does not always end the step:
+      # a run has been observed sitting well past it. When that happened without
+      # a step timeout, the *runner* eventually killed the whole job, and a job
+      # killed that way uploads no log at all -- which is how the macOS leg failed
+      # repeatedly while leaving nothing to read.
+      #
+      # timeout-minutes kills only the step, so the job carries on and the log,
+      # with -v naming the last test to start, survives. The suite takes under
+      # four minutes on a healthy runner; these are slack, not budgets.
       - name: Test
+        timeout-minutes: 15
         run: go test ./... -count=1 -v -timeout 10m
       - name: Build
         env:
