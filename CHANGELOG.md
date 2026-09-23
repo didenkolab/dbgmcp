@@ -5,6 +5,20 @@ versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed
+
+- **An agent can attach to a running process again.** `start_debug_session` marked
+  `target` required in its schema, so a call with `mode=attach` was rejected before
+  it reached the server: an agent had to invent a package path before it could touch
+  a live process, which is the one thing attach exists for. What `target` means
+  depends on the mode and for attach it means nothing, so the schema no longer
+  demands it and the handler asks per mode — including saying so when attach is
+  given one.
+- **Detaching no longer reports a killing.** Stopping an attached session answered
+  "the debuggee terminated" while the process carried on running. That is the worst
+  shape a message can take here: an agent told it has terminated a live service will
+  act on it. It now names the pid and says the process was left alone.
+
 ### Added
 
 - **Whole-frame probes work for Python.** `-probe file:line=*` is written to debugpy

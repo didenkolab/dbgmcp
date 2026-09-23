@@ -41,14 +41,19 @@ func ok[T any](out T) (*mcp.CallToolResult, T, error) { return nil, out, nil }
 // ---------- session lifecycle ----------
 
 type StartIn struct {
-	Language string            `json:"language,omitempty" jsonschema:"Runtime of the target: 'go' (default), 'python', or 'node' (also 'javascript' or 'typescript'). Capabilities differ by runtime, so read describe_backend after starting."`
-	Mode     string            `json:"mode" jsonschema:"'test' runs go test, 'debug' builds and runs a main package, 'exec' runs an already-built binary, 'attach' takes control of a process that is already running."`
-	Target   string            `json:"target" jsonschema:"Package path for test/debug (for example ./internal/billing or .), or the binary path for exec."`
-	WorkDir  string            `json:"work_dir" jsonschema:"Absolute path of the directory to run in. All relative paths and breakpoint files resolve against it."`
-	PID      int               `json:"pid,omitempty" jsonschema:"Process id to attach to. Required for mode=attach and ignored otherwise."`
-	TestRun  string            `json:"test_run,omitempty" jsonschema:"Only for mode=test: the -test.run regular expression selecting which tests to run."`
-	Args     []string          `json:"args,omitempty" jsonschema:"Arguments passed to the program itself."`
-	Env      map[string]string `json:"env,omitempty" jsonschema:"Extra environment variables for the debuggee."`
+	Language string `json:"language,omitempty" jsonschema:"Runtime of the target: 'go' (default), 'python', or 'node' (also 'javascript' or 'typescript'). Capabilities differ by runtime, so read describe_backend after starting."`
+	Mode     string `json:"mode" jsonschema:"'test' runs go test, 'debug' builds and runs a main package, 'exec' runs an already-built binary, 'attach' takes control of a process that is already running."`
+	// Optional in the schema because what it means depends on the mode, and for
+	// attach it means nothing at all -- you attach to a pid. Marked required, it
+	// forced an agent to invent a value before it could touch a running process,
+	// which is the one thing attach exists for. The handler asks for it where it
+	// is genuinely needed, and says which mode needs what.
+	Target  string            `json:"target,omitempty" jsonschema:"Package path for test/debug (for example ./internal/billing or .), or the binary path for exec. Not used by mode=attach."`
+	WorkDir string            `json:"work_dir" jsonschema:"Absolute path of the directory to run in. All relative paths and breakpoint files resolve against it."`
+	PID     int               `json:"pid,omitempty" jsonschema:"Process id to attach to. Required for mode=attach and ignored otherwise."`
+	TestRun string            `json:"test_run,omitempty" jsonschema:"Only for mode=test: the -test.run regular expression selecting which tests to run."`
+	Args    []string          `json:"args,omitempty" jsonschema:"Arguments passed to the program itself."`
+	Env     map[string]string `json:"env,omitempty" jsonschema:"Extra environment variables for the debuggee."`
 	// RecordAncestry is a switch rather than an environment variable the agent
 	// has to know, and it is off by default because recording a stack at every
 	// goroutine creation costs real performance.
@@ -84,11 +89,19 @@ func (r *Registry) startDebugSession(ctx context.Context, _ *mcp.CallToolRequest
 		if in.PID <= 0 {
 			return fail[StartOut]("mode=attach needs a pid. Find it with `pgrep -f <name>` or `ps`.")
 		}
+		if in.Target != "" {
+			// Said out loud rather than ignored: a caller who passed it believes
+			// it is doing something.
+			return fail[StartOut]("mode=attach takes a pid, not a target. Drop target=%q; the process is already running and its binary is whatever it was started from.", in.Target)
+		}
 	default:
 		return fail[StartOut]("Unknown mode %q. Use 'test', 'debug', 'exec' or 'attach'.", in.Mode)
 	}
 	if in.WorkDir == "" {
 		return fail[StartOut]("Missing required parameter: work_dir")
+	}
+	if mode != model.LaunchAttach && in.Target == "" {
+		return fail[StartOut]("mode=%s needs a target: a package path for test and debug, or the binary path for exec.", mode)
 	}
 
 	env := in.Env
@@ -180,7 +193,14 @@ func (r *Registry) stopDebugSession(ctx context.Context, _ *mcp.CallToolRequest,
 		return fail[StopOut]("%s", err.Error())
 	}
 	r.store.Remove(sess.ID)
-	return ok(StopOut{SessionID: sess.ID, Message: "Session stopped and the debuggee terminated."})
+	// What happened differs by mode, and saying the wrong one is worse than
+	// saying nothing: an attached process belongs to somebody else, and an agent
+	// told it had terminated a live service will act on that.
+	message := "Session stopped and the debuggee terminated."
+	if sess.Request.Mode.IsAttach() {
+		message = fmt.Sprintf("Detached from process %d, which is still running. It was not started here, so it was left alone.", sess.Request.PID)
+	}
+	return ok(StopOut{SessionID: sess.ID, Message: message})
 }
 
 type SessionInfo struct {
