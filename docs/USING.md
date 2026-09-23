@@ -34,7 +34,7 @@ about values over time — `dbgmcp`.**
 ### dbgmcp
 
 ```bash
-go install github.com/didenkolab/dbgmcp/cmd/dbgmcp@latest
+go install github.com/didenkolab/dbgmcp/cmd/dbgmcp@v0.3.0
 dbgmcp doctor            # reports the platform and the debuggers it can find
 ```
 
@@ -42,13 +42,26 @@ Its own debuggers are separate installs, and `doctor` names the command for each
 
 ```bash
 go install github.com/go-delve/delve/cmd/dlv@v1.27.2        # Go
-python3 -m pip install debugpy                              # Python
 # JavaScript: a GitHub release asset, not an npm package
 mkdir -p ~/.cache/dbgmcp && cd ~/.cache/dbgmcp \
   && gh release download v1.117.0 -R microsoft/vscode-js-debug \
        -p 'js-debug-dap-*.tar.gz' -O js-debug.tar.gz \
   && tar xzf js-debug.tar.gz && rm js-debug.tar.gz
 ```
+
+**Python needs `debugpy` in the interpreter your project actually uses**, and needs to be told which
+one that is. Installing it into whichever `python3` comes first on `PATH` is the usual way to end up
+with a debugger that looks broken:
+
+```bash
+.venv/bin/pip install debugpy
+export DBGMCP_PYTHON="$PWD/.venv/bin/python"
+```
+
+The other settings work the same way and are listed in the
+[README](../README.md#settings): `DBGMCP_DLV` when `dlv` is not on the `PATH` an agent inherits,
+`DBGMCP_JS_DEBUG` when js-debug lives somewhere other than `~/.cache/dbgmcp/js-debug`. Run
+`dbgmcp doctor` afterwards: it reports what was found, rather than what was meant.
 
 Register it once, for every project:
 

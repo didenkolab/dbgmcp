@@ -77,7 +77,54 @@ Delve is required and pinned to v1.27.2:
 go install github.com/go-delve/delve/cmd/dlv@v1.27.2
 ```
 
-Register it with your agent as an MCP server over stdio, command `dbgmcp`.
+### Register it with your agent
+
+It speaks MCP over stdio, so the command is the whole configuration:
+
+```bash
+claude mcp add dbgmcp -- dbgmcp
+```
+
+Or, written out — the same shape every MCP client uses:
+
+```json
+{
+  "mcpServers": {
+    "dbgmcp": { "command": "dbgmcp", "args": [] }
+  }
+}
+```
+
+### Settings
+
+There are no config files. Four environment variables exist, and the first three
+are the difference between a runtime working and appearing to be broken:
+
+| Variable | What it is for |
+|---|---|
+| `DBGMCP_DLV` | Absolute path to `dlv`. Needed when it is not on `PATH` — which is usual, because `go install` puts it in `GOPATH/bin` and a GUI-launched agent inherits a much shorter `PATH` than your shell. Checked first, before `PATH` and `GOPATH/bin`. |
+| `DBGMCP_PYTHON` | Absolute path to the interpreter to debug with, normally your project's virtualenv. **Set this for Python.** Without it the first `python3` on `PATH` is used, and that one rarely has `debugpy` installed — the failure looks like the debugger being broken rather than the wrong interpreter being picked. |
+| `DBGMCP_JS_DEBUG` | Directory of Microsoft's standalone js-debug DAP server. **Set this for JavaScript and TypeScript**, unless you unpacked it into `~/.cache/dbgmcp/js-debug`, which is looked at next. There is nothing to `go install`: it ships as a GitHub release asset. |
+| `DBGMCP_DAP_TRACE` | Any non-empty value logs the raw DAP conversation. For diagnosing an adapter, not for normal use. |
+
+`dbgmcp doctor` reports what was actually found, so run it after setting these
+rather than trusting that they took effect.
+
+Registered for an agent, they go beside the command:
+
+```json
+{
+  "mcpServers": {
+    "dbgmcp": {
+      "command": "dbgmcp",
+      "env": {
+        "DBGMCP_PYTHON": "/path/to/project/.venv/bin/python",
+        "DBGMCP_JS_DEBUG": "/path/to/js-debug"
+      }
+    }
+  }
+}
+```
 
 ## Use
 
