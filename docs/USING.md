@@ -4,7 +4,7 @@ Two tools, one contract. This is how to set them up and which to reach for.
 
 ## What each one is
 
-**The [JetBrains plugin](https://github.com/didenkolab/jetbrains-debugger-mcp)** exposes the
+**The [JetBrains plugin](https://github.com/didenkolab/jetbrains-debugger-mcp-plugin)** exposes the
 debugger of a running IDE. It sees what the IDE sees: run configurations, usages, quick fixes,
 every language the IDE has a debugger for.
 
