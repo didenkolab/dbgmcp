@@ -192,10 +192,15 @@ func (b *Backend) Ancestors(context.Context, string, int) (model.Ancestry, error
 
 // ---------- execution ----------
 
+// threadID is the unit every request is addressed to.
+//
+// Zero is a real id, not an absence, so "known" is a separate fact. The default
+// when nothing is known yet is 1 because most adapters number from there; the
+// moment any stop or thread listing arrives, the real id replaces it.
 func (b *Backend) threadID() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.currentThread != 0 {
+	if b.threadKnown {
 		return b.currentThread
 	}
 	return 1
@@ -262,23 +267,52 @@ func (b *Backend) WaitForStop(ctx context.Context, timeout time.Duration) (model
 	if err != nil {
 		return model.StopEvent{}, err
 	}
-	select {
-	case ev := <-cl.stopped:
-		b.mu.Lock()
-		b.currentThread, b.currentFrame = ev.ThreadID, 0
-		b.mu.Unlock()
-		return b.describeStop(ctx, ev)
-	case <-cl.terminated:
-		b.mu.Lock()
-		b.exited = true
-		b.mu.Unlock()
-		return model.StopEvent{State: model.StateExited, Reason: model.StopExited, Message: "the process exited"}, nil
-	case <-time.After(timeout):
-		return model.StopEvent{State: model.StateRunning, Reason: model.StopUnknown,
-			Message: fmt.Sprintf("still running after %s", timeout)}, nil
-	case <-ctx.Done():
-		return model.StopEvent{}, ctx.Err()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case ev := <-cl.stopped:
+			b.mu.Lock()
+			b.currentThread, b.threadKnown, b.currentFrame = ev.ThreadID, true, 0
+			b.mu.Unlock()
+
+			stop, err := b.describeStop(ctx, ev)
+			if err != nil {
+				return stop, err
+			}
+			// Skip a stop nobody asked for: reported as "entry", attributed to
+			// no breakpoint, and standing on none of ours. Delivering it puts
+			// the agent in a frame it did not choose, and the names it came to
+			// read are legitimately absent there.
+			if b.adapter.spuriousEntryStops && ev.Reason == "entry" &&
+				len(ev.HitBreakpointIDs) == 0 && stop.BreakpointID == "" {
+				if err := b.resumeQuietly(ctx); err != nil {
+					return stop, nil
+				}
+				continue
+			}
+			return stop, nil
+		case <-cl.terminated:
+			b.mu.Lock()
+			b.exited = true
+			b.mu.Unlock()
+			return model.StopEvent{State: model.StateExited, Reason: model.StopExited, Message: "the process exited"}, nil
+		case <-deadline:
+			return model.StopEvent{State: model.StateRunning, Reason: model.StopUnknown,
+				Message: fmt.Sprintf("still running after %s", timeout)}, nil
+		case <-ctx.Done():
+			return model.StopEvent{}, ctx.Err()
+		}
 	}
+}
+
+// resumeQuietly continues past a stop the agent never learns about.
+func (b *Backend) resumeQuietly(ctx context.Context) error {
+	cl, err := b.rpc()
+	if err != nil {
+		return err
+	}
+	_, err = cl.send(ctx, "continue", map[string]any{"threadId": b.threadID()}, requestTimeout)
+	return err
 }
 
 func (b *Backend) Status(ctx context.Context) (model.StopEvent, error) {

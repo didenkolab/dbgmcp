@@ -65,6 +65,15 @@ var node = &Adapter{
 	// js-debug reports where a function breakpoint bound, unlike debugpy.
 	symbolBreakpointsUsable: false,
 
+	// stopOnEntry is required here -- without it the program runs to completion
+	// before a breakpoint can be set, which is the race the stopped-at-start
+	// contract exists to prevent. The price is that js-debug then pauses
+	// repeatedly with reason "entry" at places nobody asked about, attributed to
+	// no breakpoint, before execution settles. Passing those to the agent hands
+	// it a frame it did not ask for, where the names it wants genuinely do not
+	// exist.
+	spuriousEntryStops: true,
+
 	start: func() (*exec.Cmd, *conn, dialer, error) {
 		home, err := jsDebugHome()
 		if err != nil {

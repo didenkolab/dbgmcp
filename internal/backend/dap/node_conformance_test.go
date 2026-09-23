@@ -27,13 +27,6 @@ func TestNodeConformance(t *testing.T) {
 	if _, err := os.Stat(jsFixtureDir(t)); err != nil {
 		t.Skipf("fixture missing: %v", err)
 	}
-	// This suite does not pass yet, and that is the point of it: it is the
-	// definition of done for the node profile, and the reason the profile is not
-	// offered to agents. Run it deliberately with DBGMCP_NODE_WIP=1; leaving it
-	// red in every run would train everyone to ignore a red suite.
-	if os.Getenv("DBGMCP_NODE_WIP") == "" {
-		t.Skip("node profile is under construction; set DBGMCP_NODE_WIP=1 to run its conformance suite")
-	}
 	dir := jsFixtureDir(t)
 	cart := filepath.Join(dir, "cart.js")
 
@@ -42,7 +35,7 @@ func TestNodeConformance(t *testing.T) {
 	conformance.Run(t, conformance.Fixture{
 		Name: "node/js-debug",
 		New: func() backend.Backend {
-			b, err := dap.NewUnderConstruction("node")
+			b, err := dap.New("node")
 			if err != nil {
 				t.Fatalf("node backend: %v", err)
 			}

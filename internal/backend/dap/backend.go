@@ -37,7 +37,14 @@ type Backend struct {
 	nextLocalID int
 
 	currentThread int
-	currentFrame  int
+	// threadKnown is tracked separately from the id because zero is a real
+	// thread id -- js-debug numbers its only thread 0 -- and using zero as the
+	// sentinel for "not known yet" silently addressed every request to thread 1,
+	// which does not exist. The adapter answered by stopping again in the same
+	// place instead of resuming, which reads as a breakpoint that fires
+	// repeatedly rather than as a request sent to nobody.
+	threadKnown  bool
+	currentFrame int
 	// frameIDs maps our frame index to the adapter's opaque ids, which are
 	// only valid until the next resume.
 	frameIDs  []int
@@ -61,16 +68,6 @@ type trackedBreakpoint struct {
 
 func New(language string) (*Backend, error) {
 	a, err := Lookup(language)
-	if err != nil {
-		return nil, err
-	}
-	return &Backend{adapter: a, breakpoints: map[string][]trackedBreakpoint{}}, nil
-}
-
-// NewUnderConstruction builds a backend on a profile that is not offered yet.
-// Only that profile's own tests call it.
-func NewUnderConstruction(language string) (*Backend, error) {
-	a, err := NewDevelopmentAdapter(language)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +171,7 @@ func (b *Backend) Launch(ctx context.Context, req model.LaunchRequest) error {
 	select {
 	case ev := <-active.stopped:
 		b.mu.Lock()
-		b.currentThread = ev.ThreadID
+		b.currentThread, b.threadKnown = ev.ThreadID, true
 		b.mu.Unlock()
 	case <-active.terminated:
 		b.mu.Lock()

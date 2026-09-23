@@ -12,10 +12,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 )
+
+// truncateFrame keeps a traced frame readable; the trace shows the shape of a
+// conversation, not a transcript of it.
+func truncateFrame(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
+}
 
 // Message is one DAP frame. The protocol multiplexes three kinds down one pipe,
 // distinguished by Type, so they are decoded into a single shape and sorted
@@ -47,6 +57,9 @@ func (c *conn) write(m Message) error {
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return err
+	}
+	if os.Getenv("DBGMCP_DAP_TRACE") != "" {
+		fmt.Fprintf(os.Stderr, "-> %s %s %s\n", m.Type, m.Command, truncateFrame(string(m.Arguments), 140))
 	}
 	c.writeM.Lock()
 	defer c.writeM.Unlock()

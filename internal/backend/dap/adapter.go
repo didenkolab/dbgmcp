@@ -46,28 +46,18 @@ type Adapter struct {
 	// one worth declaring, and the honest place to say so is here, per runtime,
 	// rather than in the protocol-generic code.
 	symbolBreakpointsUsable bool
+
+	// spuriousEntryStops says this adapter emits stops the agent did not ask
+	// for, reported with reason "entry" and attributed to no breakpoint. They
+	// are skipped rather than delivered. Named per adapter because it is a
+	// property of one implementation, not of the protocol.
+	spuriousEntryStops bool
 }
 
-// Adapters is the registry. Ruby is present although it is being retired,
-// because rdbg speaks DAP and supporting it costs one entry here.
-// Adapters is the registry of runtimes this server will actually accept.
-//
-// node is deliberately absent. Its profile is written and most of it works --
-// launch, stepping, hit counts, breakpoints that bind -- but a stop does not
-// reliably land in the frame the breakpoint named, so evaluation and
-// set_variable fail against names that are genuinely not in the frame reached.
-// Registering it would mean declaring set_variable and eval_calls_functions as
-// supported while they do not work, which is the exact dishonesty the
-// conformance suite exists to catch. It goes in when the suite is green, not
-// before.
+// Adapters is the registry of runtimes this server accepts. One DAP
+// implementation serves all of them; what differs is each profile.
 var Adapters = map[string]*Adapter{
-	"python": python,
-}
-
-// developmentAdapters are profiles under construction. They are reachable only
-// from their own tests, so the work stays visible and runnable without being
-// offered to an agent as if it were finished.
-var developmentAdapters = map[string]*Adapter{
+	"python":     python,
 	"node":       node,
 	"javascript": node,
 	"typescript": node,
@@ -76,11 +66,7 @@ var developmentAdapters = map[string]*Adapter{
 func Lookup(language string) (*Adapter, error) {
 	a, found := Adapters[strings.ToLower(language)]
 	if !found {
-		if _, underway := developmentAdapters[strings.ToLower(language)]; underway {
-			return nil, fmt.Errorf(
-				"%s is not supported yet: the adapter profile exists but a stop does not reliably land in the frame the breakpoint named, so evaluation in that frame fails. It will be offered when its conformance suite is green",
-				language)
-		}
+
 		known := make([]string, 0, len(Adapters))
 		for name := range Adapters {
 			known = append(known, name)
@@ -196,14 +182,4 @@ func absolute(workDir, target string) string {
 		return target
 	}
 	return filepath.Join(workDir, target)
-}
-
-// NewDevelopmentAdapter reaches a profile that is still being built. It exists
-// for that profile's own tests; nothing an agent can call goes through it.
-func NewDevelopmentAdapter(language string) (*Adapter, error) {
-	a, found := developmentAdapters[strings.ToLower(language)]
-	if !found {
-		return nil, fmt.Errorf("no adapter under construction for %q", language)
-	}
-	return a, nil
 }

@@ -41,7 +41,7 @@ func ok[T any](out T) (*mcp.CallToolResult, T, error) { return nil, out, nil }
 // ---------- session lifecycle ----------
 
 type StartIn struct {
-	Language string            `json:"language,omitempty" jsonschema:"Runtime of the target: 'go' (default) or 'python'. Capabilities differ by runtime, so read describe_backend after starting."`
+	Language string            `json:"language,omitempty" jsonschema:"Runtime of the target: 'go' (default), 'python', or 'node' (also 'javascript' or 'typescript'). Capabilities differ by runtime, so read describe_backend after starting."`
 	Mode     string            `json:"mode" jsonschema:"'test' runs go test, 'debug' builds and runs a main package, 'exec' runs an already-built binary, 'attach' takes control of a process that is already running."`
 	Target   string            `json:"target" jsonschema:"Package path for test/debug (for example ./internal/billing or .), or the binary path for exec."`
 	WorkDir  string            `json:"work_dir" jsonschema:"Absolute path of the directory to run in. All relative paths and breakpoint files resolve against it."`
