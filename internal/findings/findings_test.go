@@ -254,3 +254,31 @@ func TestConcurrentUnitsAreSeparateStories(t *testing.T) {
 		t.Errorf("two clean interleaved trends produced findings: %v", kinds(got))
 	}
 }
+
+func TestIgnoresAFlagThatFlipsOnceAndStays(t *testing.T) {
+	// A latch is not a trend that stopped. This shape -- one change, then the same
+	// value forever -- is what any "have I done this yet" flag looks like, and it
+	// used to be reported as having "changed at every hit", which was false. It
+	// passed because the check for a genuinely changing prefix had nothing to
+	// compare when the frozen run began at the second reading.
+	got := Analyse(transcriptOf("added", "false", "true", "true", "true", "true", "true", "true"), nil)
+
+	if f := has(got, model.FindingValueFroze); f != nil {
+		t.Errorf("reported a latch as a frozen value: %s", f.Detail)
+	}
+}
+
+func TestStillReportsAFreezeWithTheShortestRealPrefix(t *testing.T) {
+	// The boundary the fix above must not overshoot: two changes before the freeze
+	// is the least that can be called a trend, and the fixture this rule exists
+	// for -- a token that advanced twice and then stopped -- is exactly that.
+	got := Analyse(transcriptOf("token", "tok-0", "tok-1", "tok-2", "tok-2", "tok-2", "tok-2"), nil)
+
+	f := has(got, model.FindingValueFroze)
+	if f == nil {
+		t.Fatalf("the shortest genuine freeze went unreported; got %v", kinds(got))
+	}
+	if !strings.Contains(f.Detail, "tok-2") {
+		t.Errorf("the detail does not name the value it froze at: %s", f.Detail)
+	}
+}

@@ -239,7 +239,15 @@ func (s series) froze() (model.Finding, bool) {
 		start--
 	}
 	frozen := last - start + 1
-	if frozen < minSamples || start == 0 {
+	// Two samples have to precede the frozen run, not one.
+	//
+	// With one, the check below is vacuous -- there is no pair to compare -- so a
+	// latch, a flag that flips once and then never moves again, satisfied it by
+	// having nothing examined. The reported detail then said the value "changed at
+	// every hit", which was false: it changed once. A rule that reports a latch
+	// teaches a reader to skip the whole section, which costs more than the rule
+	// is worth.
+	if frozen < minSamples || start < 2 {
 		return model.Finding{}, false
 	}
 	// Only interesting if it was genuinely changing before.

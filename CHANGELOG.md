@@ -3,6 +3,17 @@
 All notable changes are recorded here. This project follows [semantic
 versioning](https://semver.org).
 
+## [Unreleased]
+
+### Fixed
+
+- **`value_froze` no longer reports a latch.** A flag that flips once and then never moves again
+  satisfied the rule's "was it genuinely changing before" check by having nothing for it to examine:
+  with the frozen run starting at the second reading, the comparison loop ran zero times. The
+  reported detail then claimed the value "changed at every hit", which was false — it changed once.
+  Two readings must now precede the freeze. A rule that reports a latch teaches a reader to skip the
+  whole section, which costs more than the rule is worth.
+
 ## [0.2.0] - 2026-09-23
 
 ### Added
