@@ -50,6 +50,10 @@ func jsDebugHome() (string, error) {
 		searched, JsDebugVersion)
 }
 
+// JsDebugInstalled reports whether the JavaScript adapter is available, and says
+// how to get it when it is not.
+func JsDebugInstalled() (string, error) { return jsDebugHome() }
+
 func isJsDebugDir(dir string) (bool, string) {
 	entry := filepath.Join(dir, "src", "dapDebugServer.js")
 	if st, err := os.Stat(entry); err == nil && !st.IsDir() {

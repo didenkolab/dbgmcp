@@ -29,6 +29,22 @@ jobs:
           cache: true
       - name: Install Delve
         run: go install github.com/go-delve/delve/cmd/dlv@v1.27.2
+
+      # An optional toolchain, fetched so the JavaScript profile is exercised
+      # rather than skipped. It is a GitHub release asset, not an npm package.
+      - name: Install the JavaScript debug adapter
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ~/.cache/dbgmcp && cd ~/.cache/dbgmcp
+          gh release download v1.117.0 -R microsoft/vscode-js-debug \
+            -p 'js-debug-dap-*.tar.gz' -O js-debug.tar.gz
+          tar xzf js-debug.tar.gz && rm js-debug.tar.gz
+
+      # debugpy for the Python profile, for the same reason.
+      - name: Install debugpy
+        run: python3 -m pip install --break-system-packages debugpy || python3 -m pip install debugpy
+
       - name: Test
         run: go test ./... -count=1 -timeout 20m
       - name: Build

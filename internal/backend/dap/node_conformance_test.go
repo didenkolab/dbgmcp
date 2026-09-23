@@ -24,6 +24,7 @@ func jsFixtureDir(t *testing.T) string {
 // the neutral model is a model rather than a description of whichever debugger
 // was written first.
 func TestNodeConformance(t *testing.T) {
+	requireJsDebug(t)
 	if _, err := os.Stat(jsFixtureDir(t)); err != nil {
 		t.Skipf("fixture missing: %v", err)
 	}
@@ -57,4 +58,16 @@ func TestNodeConformance(t *testing.T) {
 		SpawnedFile:   cart,
 		SpawnedLine:   conformance.LineContaining(t, cart, "token = refreshToken"),
 	})
+}
+
+// requireJsDebug skips rather than fails when the adapter is not installed.
+//
+// It is an optional toolchain, like Delve for the Go backend: a machine without
+// it should report "not exercised here", not "broken". A hard failure on a
+// missing optional dependency trains people to ignore a red suite.
+func requireJsDebug(t *testing.T) {
+	t.Helper()
+	if _, err := dap.JsDebugInstalled(); err != nil {
+		t.Skipf("the JavaScript debug adapter is not installed: %v", err)
+	}
 }

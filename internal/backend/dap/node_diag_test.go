@@ -16,6 +16,7 @@ import (
 // TestNodeDiagnostic walks one launch step by step and says WHERE it is at each
 // step, so a stop landing in the wrong frame is attributed rather than guessed.
 func TestNodeDiagnostic(t *testing.T) {
+	requireJsDebug(t)
 	_, thisFile, _, _ := runtime.Caller(0)
 	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "testdata", "buggy_js")
 	cart := filepath.Join(dir, "cart.js")
