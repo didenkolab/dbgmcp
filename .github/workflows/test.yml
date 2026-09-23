@@ -30,6 +30,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.label }}
 
+    # Defined once so the steps and the completeness check cannot disagree.
+    env:
+      PKG_PURE: ./internal/model/... ./internal/findings/... ./internal/diffruns/... ./internal/discover/... ./internal/session/... ./internal/backend ./internal/backend/conformance ./cmd/...
+      PKG_DELVE: ./internal/backend/delve/...
+      PKG_DAP: ./internal/backend/dap/...
+      PKG_SERVER: ./internal/mcpserver/... ./internal/tools/...
+
     steps:
       - uses: actions/checkout@v4
 
@@ -70,22 +77,44 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # Two timeouts, because they fail differently and only one of them keeps
-      # the evidence.
+      # The suite is split by package group, and that is a diagnostic, not tidiness.
       #
-      # go test's own -timeout panics the test binary and dumps every goroutine's
-      # stack, which names the blocked test. But it does not always end the step:
-      # a run has been observed sitting well past it. When that happened without
-      # a step timeout, the *runner* eventually killed the whole job, and a job
-      # killed that way uploads no log at all -- which is how the macOS leg failed
-      # repeatedly while leaving nothing to read.
+      # On macOS a run has been observed wedged past go test's own -timeout and
+      # past timeout-minutes as well, ending only when the runner killed the whole
+      # job -- and a job killed that way uploads no log at all. Step metadata does
+      # survive it. So the group that stays in_progress names where it wedged even
+      # when there is nothing to read, which a single step could never do.
       #
-      # timeout-minutes kills only the step, so the job carries on and the log,
-      # with -v naming the last test to start, survives. The suite takes under
-      # four minutes on a healthy runner; these are slack, not budgets.
-      - name: Test
-        timeout-minutes: 15
-        run: go test ./... -count=1 -v -timeout 10m
+      # PKG_* are defined once at job level and checked for completeness below, so
+      # a new package cannot quietly fall outside every group.
+      - name: Test (pure logic)
+        timeout-minutes: 5
+        run: go test $PKG_PURE -count=1 -v -timeout 4m
+
+      - name: Test (Go debugger)
+        timeout-minutes: 10
+        run: go test $PKG_DELVE -count=1 -v -timeout 8m
+
+      - name: Test (DAP adapters)
+        timeout-minutes: 12
+        run: go test $PKG_DAP -count=1 -v -timeout 10m
+
+      - name: Test (server and tools)
+        timeout-minutes: 10
+        run: go test $PKG_SERVER -count=1 -v -timeout 8m
+
+      # Runs last and never gates the suite: its only job is to fail loudly if a
+      # package exists that no group above would have tested.
+      - name: Every package belongs to a group
+        if: always()
+        run: |
+          missing=$(comm -23 <(go list ./... | sort) <(go list $PKG_PURE $PKG_DELVE $PKG_DAP $PKG_SERVER | sort))
+          if [ -n "$missing" ]; then
+            echo "These packages are in no test group, so they were never run:"
+            echo "$missing"
+            exit 1
+          fi
+          echo "every package is covered by a group"
 
       # ptrace on Ubuntu runners is unrestricted by default, but say so out loud:
       # a silent change here would look like a debugger bug rather than a
