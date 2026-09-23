@@ -45,8 +45,14 @@ jobs:
       - name: Install debugpy
         run: python3 -m pip install --break-system-packages debugpy || python3 -m pip install debugpy
 
+      # The timeout is deliberately far inside the runner's own kill: when it
+      # fires, go test dumps every goroutine's stack, which names the test and
+      # where it is blocked. A job killed by the runner instead uploads no log
+      # at all, which is how the macOS leg managed to fail repeatedly without
+      # leaving anything to read. The whole suite takes under three minutes on a
+      # healthy runner, so ten is slack, not a budget.
       - name: Test
-        run: go test ./... -count=1 -timeout 20m
+        run: go test ./... -count=1 -v -timeout 10m
       - name: Build
         env:
           GOOS: ${{ matrix.goos }}
