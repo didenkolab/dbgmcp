@@ -241,6 +241,22 @@ dbgmcp doctor
 The live tests skip when Delve is absent rather than failing. There are no mocked debuggers in
 this repository on purpose: a mocked debugger proves nothing about whether this can debug.
 
+**On a constrained macOS machine, run the suite a group at a time.** `go test ./...` runs packages
+in parallel, and on a hosted macOS runner several packages each driving a debugger at once wedged the
+machine past `go test -timeout`, past the CI step timeout, and only ended when the whole job was
+killed -- which is also why it left no log to read. Running the groups in sequence, as
+`.github/workflows/test.yml` now does, passes reliably including the Python and JavaScript suites:
+
+```bash
+go test ./internal/model/... ./internal/findings/... ./internal/diffruns/... ./internal/discover/... ./internal/session/... ./internal/backend/... -count=1
+go test ./internal/backend/delve/... -count=1
+go test ./internal/backend/dap/... -count=1
+go test ./internal/mcpserver/... ./internal/tools/... -count=1
+```
+
+A developer machine with plenty of cores runs `go test ./...` without trouble, so this is about
+constrained machines rather than about the tests being wrong.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Two rules are load-bearing rather than
