@@ -48,9 +48,14 @@ jobs:
             -p 'js-debug-dap-*.tar.gz' -O js-debug.tar.gz
           tar xzf js-debug.tar.gz && rm js-debug.tar.gz
 
-      # debugpy for the Python profile, for the same reason.
+      # debugpy for the Python profile, installed into .venv-test because that is
+      # exactly where the suite looks for it. An interpreter carrying debugpy
+      # anywhere else leaves every Python test skipped -- and a skipped suite
+      # reports the same green as a passing one.
       - name: Install debugpy
-        run: python3 -m pip install --break-system-packages debugpy || python3 -m pip install debugpy
+        run: |
+          python3 -m venv .venv-test
+          .venv-test/bin/pip install -q debugpy
 
 
       - name: Doctor
