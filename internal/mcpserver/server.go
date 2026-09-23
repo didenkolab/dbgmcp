@@ -11,7 +11,7 @@ import (
 
 const (
 	ServerName    = "dbgmcp"
-	ServerVersion = "0.1.0"
+	ServerVersion = "0.2.0"
 )
 
 // Instructions are read by the client before any tool call, so they carry the
