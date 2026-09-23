@@ -193,6 +193,13 @@ func (r *Registry) Register(s *mcp.Server) {
 	}, r.getStackTrace)
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "select_stack_frame",
+		Annotations: mutating("Select Stack Frame"),
+		Description: "Make a stack frame the current one, so later calls that do not name a frame act in it. " +
+			"Use it to look at a caller's variables without repeating the index on every call.",
+	}, r.selectStackFrame)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_execution_units",
 		Annotations: readOnly("List Execution Units"),
 		Description: "List the target's units of execution -- goroutines for Go, threads or tasks for other runtimes -- with their state and top frame. " +

@@ -9,8 +9,9 @@ Reading code tells you what it should do. A debugger tells you what it did. Reac
 the moment a hypothesis needs a fact: which branch ran, what the value actually was, which
 goroutine is stuck, how many times a loop went round.
 
-The tool names below are shared between the headless server and the JetBrains plugin, so this
-works the same whether or not an IDE is open.
+The tool names below are shared between the headless server and our JetBrains plugin, so this
+works the same whether or not an IDE is open. Where a name exists in only one of them, it is
+because only one of them can do that thing -- ask `describe_backend` rather than assuming.
 
 ## Read the backend before planning
 

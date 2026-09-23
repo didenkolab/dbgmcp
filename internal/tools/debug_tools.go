@@ -295,3 +295,26 @@ func (r *Registry) getSourceContext(ctx context.Context, _ *mcp.CallToolRequest,
 	}
 	return ok(SourceOut{Source: span})
 }
+
+type SelectFrameIn struct {
+	SessionID  string `json:"session_id,omitempty" jsonschema:"Session to act on. May be omitted when exactly one session is open."`
+	FrameIndex int    `json:"frame_index" jsonschema:"Frame to make current, 0 being the innermost."`
+}
+
+type SelectFrameOut struct {
+	Frame   model.Frame `json:"frame"`
+	Message string      `json:"message"`
+}
+
+func (r *Registry) selectStackFrame(ctx context.Context, _ *mcp.CallToolRequest, in SelectFrameIn) (*mcp.CallToolResult, SelectFrameOut, error) {
+	sess, err := r.store.Resolve(in.SessionID)
+	if err != nil {
+		return fail[SelectFrameOut]("%s", err.Error())
+	}
+	frame, err := sess.Backend.SelectFrame(ctx, in.FrameIndex)
+	if err != nil {
+		return fail[SelectFrameOut]("%s", err.Error())
+	}
+	return ok(SelectFrameOut{Frame: frame,
+		Message: "Later calls that do not name a frame now act in this one."})
+}

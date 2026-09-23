@@ -447,6 +447,21 @@ func (b *Backend) Stack(_ context.Context, unitID string, maxFrames int) ([]mode
 	return out, nil
 }
 
+// SelectFrame makes a frame the default for later calls.
+func (b *Backend) SelectFrame(ctx context.Context, index int) (model.Frame, error) {
+	frames, err := b.Stack(ctx, "", 64)
+	if err != nil {
+		return model.Frame{}, err
+	}
+	if index < 0 || index >= len(frames) {
+		return model.Frame{}, fmt.Errorf("frame %d does not exist; the stack has %d frames", index, len(frames))
+	}
+	b.mu.Lock()
+	b.curFrame = index
+	b.mu.Unlock()
+	return frames[index], nil
+}
+
 func (b *Backend) ExecUnits(_ context.Context, limit int) ([]model.ExecUnit, error) {
 	c, err := b.sup.rpc()
 	if err != nil {

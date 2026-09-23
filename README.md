@@ -124,8 +124,11 @@ and every test function by name. An IDE plugin can list run configurations becau
 them; with no IDE there is nothing to list, so they are derived from the source instead -- without
 executing anything.
 
-**Tool names match the [JetBrains debugger MCP plugin](https://github.com/hechtcarmel/jetbrains-debugger-mcp-plugin)**
-wherever the semantics match, so one agent and one skill work with an IDE and without one.
+**Tool names match our [JetBrains debugger plugin](https://github.com/didenkolab/jetbrains-debugger-mcp)** wherever the semantics match, so one
+agent and one companion skill work with an IDE and without one. Twenty tools are shared verbatim.
+The rest divide honestly: the plugin has what only an IDE can do (`find_usages`, the quick fixes,
+run configurations), and this server has what only a debugger it drives itself can do
+(`describe_backend`, `explain_value`, `set_watchpoint`, `get_unit_ancestors`).
 
 ## Known gaps
 

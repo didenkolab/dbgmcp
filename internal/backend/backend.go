@@ -62,6 +62,10 @@ type Backend interface {
 	Variables(ctx context.Context, frameIndex int, budget model.ValueBudget) ([]model.Variable, error)
 	Evaluate(ctx context.Context, frameIndex int, expr string, budget model.ValueBudget) (model.Variable, error)
 	Stack(ctx context.Context, unitID string, maxFrames int) ([]model.Frame, error)
+	// SelectFrame changes which frame the calls that do not name one act in.
+	// Without it every later call has to repeat the index, and an agent that
+	// forgets once reads the wrong frame without being told.
+	SelectFrame(ctx context.Context, index int) (model.Frame, error)
 	ExecUnits(ctx context.Context, limit int) ([]model.ExecUnit, error)
 	// Trace records expressions at a set of probes and returns the transcript
 	// from one call, with the debugger doing the evaluating. Backends that

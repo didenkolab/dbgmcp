@@ -88,9 +88,7 @@ func (b *Backend) Variables(ctx context.Context, frameIndex int, budget model.Va
 	if err != nil {
 		return nil, err
 	}
-	if frameIndex < 0 {
-		frameIndex = 0
-	}
+	frameIndex = b.resolveFrame(frameIndex)
 	frameID, err := b.frameRef(ctx, frameIndex)
 	if err != nil {
 		return nil, err
@@ -180,9 +178,7 @@ func (b *Backend) Evaluate(ctx context.Context, frameIndex int, expr string, bud
 	if err != nil {
 		return model.Variable{}, err
 	}
-	if frameIndex < 0 {
-		frameIndex = 0
-	}
+	frameIndex = b.resolveFrame(frameIndex)
 	args := map[string]any{"expression": expr, "context": "repl"}
 	if frameID, err := b.frameRef(ctx, frameIndex); err == nil {
 		args["frameId"] = frameID
@@ -271,6 +267,32 @@ func splitPath(path string) (container, member string) {
 		return "", path
 	}
 	return path[:i], path[i+1:]
+}
+
+// resolveFrame turns "no frame named" into the one the agent selected, so a
+// selection is not silently ignored by every call that omits an index.
+func (b *Backend) resolveFrame(index int) int {
+	if index >= 0 {
+		return index
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.currentFrame
+}
+
+// SelectFrame makes a frame the default for later calls.
+func (b *Backend) SelectFrame(ctx context.Context, index int) (model.Frame, error) {
+	frames, err := b.Stack(ctx, "", 64)
+	if err != nil {
+		return model.Frame{}, err
+	}
+	if index < 0 || index >= len(frames) {
+		return model.Frame{}, fmt.Errorf("frame %d does not exist; the stack has %d frames", index, len(frames))
+	}
+	b.mu.Lock()
+	b.currentFrame = index
+	b.mu.Unlock()
+	return frames[index], nil
 }
 
 func (b *Backend) ExecUnits(ctx context.Context, limit int) ([]model.ExecUnit, error) {

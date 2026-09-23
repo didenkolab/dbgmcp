@@ -67,6 +67,7 @@ func Run(t *testing.T, f Fixture) {
 	t.Run("breakpoint by symbol", func(t *testing.T) { testBySymbol(t, f) })
 	t.Run("hit counts", func(t *testing.T) { testHitCounts(t, f) })
 	t.Run("stepping", func(t *testing.T) { testStepping(t, f) })
+	t.Run("frame selection", func(t *testing.T) { testFrameSelection(t, f) })
 	t.Run("set variable", func(t *testing.T) { testSetVariable(t, f) })
 	t.Run("watchpoints", func(t *testing.T) { testWatchpoints(t, f) })
 	t.Run("stepping with a watchpoint set", func(t *testing.T) { testStepWithWatchpoint(t, f) })
@@ -255,6 +256,49 @@ func testStepping(t *testing.T, f Fixture) {
 
 	if _, err := b.Step(ctx, model.StepOut); err != nil {
 		t.Errorf("step out: %v", err)
+	}
+}
+
+// testFrameSelection checks that choosing a frame actually changes where the
+// calls that do not name one look.
+//
+// A selection that is accepted and then ignored is worse than one refused:
+// every later reading is of a frame the agent believes it left.
+//
+// The evidence is a name that exists only in the caller. An earlier version
+// compared the same expression before and after, which passed on Go by an
+// accident of naming and failed on Python and JavaScript, where the loop
+// variable in the caller happens to share the callee's parameter name -- the
+// test was wrong, not the backends.
+func testFrameSelection(t *testing.T, f Fixture) {
+	b := start(t, f, f.Launch)
+	ctx := context.Background()
+	stop := runToCall(t, b, f)
+	if len(stop.Frames) < 2 {
+		t.Skipf("only %d frame(s) here, nothing to select between", len(stop.Frames))
+	}
+
+	// f.LoopLocal lives in the caller and not in the callee we stopped in.
+	if _, err := b.Evaluate(ctx, 0, f.LoopLocal, model.ValueBudget{}); err == nil {
+		t.Skipf("%q is readable from the innermost frame too, so it cannot show a selection", f.LoopLocal)
+	}
+
+	caller, err := b.SelectFrame(ctx, 1)
+	if err != nil {
+		t.Fatalf("select the caller: %v", err)
+	}
+	if caller.Index != 1 {
+		t.Errorf("selected frame 1 and got back index %d", caller.Index)
+	}
+
+	if _, err := b.Evaluate(ctx, -1, f.LoopLocal, model.ValueBudget{}); err != nil {
+		t.Errorf("%q is a local of the selected frame and still could not be read: %v", f.LoopLocal, err)
+	}
+
+	// And a frame that is not there must be refused, not silently clamped to
+	// one that is.
+	if _, err := b.SelectFrame(ctx, 9999); err == nil {
+		t.Error("selecting a frame beyond the stack was accepted")
 	}
 }
 

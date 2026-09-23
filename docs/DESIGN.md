@@ -3,9 +3,9 @@
 **Date:** 2026-09-22
 **Status:** the design this server was built from. Where the code has since moved on, the
 code is authoritative and `docs/ROADMAP.md` records the direction.
-**Relationship to the JetBrains plugin:** the tool-name contract is shared with
-[jetbrains-debugger-mcp-plugin](https://github.com/hechtcarmel/jetbrains-debugger-mcp-plugin), so one
-agent and one companion skill work with an IDE and without one.
+**Relationship to the JetBrains plugin:** the tool-name contract is shared with our
+[jetbrains-debugger-mcp](https://github.com/didenkolab/jetbrains-debugger-mcp) plugin, so one agent and one companion skill work with an IDE and
+without one. It began as a fork of hechtcarmel/jetbrains-debugger-mcp-plugin.
 
 ## Problem
 
