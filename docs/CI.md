@@ -99,6 +99,21 @@ The report names the earliest point the two stopped agreeing, and says whether t
 difference is a value, an absence, a different number of passes, or a branch only
 one run reached.
 
+## Python
+
+`*` works there too, because Python can name its own scope: the probe is written to
+debugpy as `locals()`, and the whole frame comes back under that name.
+
+```bash
+dbgmcp trace -lang python -dir . -mode debug -target app.py \
+  -probe 'billing.py:88=*' -format md -out debug-report.md
+```
+
+JavaScript and TypeScript cannot: a logpoint evaluates expressions while the
+program runs on, so there is no stopped frame to enumerate, and the language has
+no expression that names its scope. The request is refused by name there, and the
+answer is to name the expressions.
+
 ## Build tags
 
 A suite kept behind a tag cannot be built without it, so it cannot be debugged

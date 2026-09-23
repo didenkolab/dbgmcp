@@ -34,6 +34,7 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 		}
 	}()
 
+	recorded := make([][]string, len(probes))
 	for i, p := range probes {
 		if p.Location.File == "" || p.Location.Line <= 0 {
 			return model.Transcript{}, fmt.Errorf("probe %d needs a file and a line; this adapter cannot place a probe by symbol", i)
@@ -41,17 +42,31 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 		if len(p.Record) == 0 {
 			return model.Transcript{}, fmt.Errorf("probe %d records nothing", i)
 		}
-		// Refused by name rather than by evaluating an expression literally
-		// called "*" and reporting whatever the adapter makes of it.
-		for _, expr := range p.Record {
-			if expr == model.RecordEverythingInScope {
-				return model.Transcript{}, fmt.Errorf(
-					"probe %d asked to record everything in scope, which this adapter cannot do: "+
-						"it evaluates expressions and has no way to enumerate a frame. Name the expressions instead", i)
+		// A whole-frame request becomes whatever this runtime writes for its own
+		// scope, or is refused by name -- never evaluated as an expression
+		// literally called "*", which would report something that looks like an
+		// answer.
+		record := make([]string, len(p.Record))
+		copy(record, p.Record)
+		for j, expr := range record {
+			if expr != model.RecordEverythingInScope {
+				continue
 			}
+			if b.adapter.wholeFrameExpr == "" {
+				return model.Transcript{}, fmt.Errorf(
+					"probe %d asked to record everything in scope, which the %s adapter cannot do: "+
+						"it records by evaluating expressions while the program runs on, so there is no "+
+						"stopped frame to enumerate, and this runtime has no expression naming its own "+
+						"scope. Name the expressions instead", i, b.adapter.Language)
+			}
+			record[j] = b.adapter.wholeFrameExpr
 		}
+		// Kept beside the probes rather than written back into them: the caller's
+		// slice is not ours, and the output carries the translated names, so the
+		// matcher has to read these.
+		recorded[i] = record
 		bp, err := b.SetBreakpoint(ctx, model.Breakpoint{
-			Location: p.Location, Record: p.Record, Suspend: model.SuspendNone,
+			Location: p.Location, Record: record, Suspend: model.SuspendNone,
 		})
 		if err != nil {
 			return model.Transcript{}, fmt.Errorf("probe %d: %w", i, err)
@@ -95,7 +110,7 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 		if !found {
 			continue
 		}
-		index := probeFor(values, probes)
+		index := probeFor(values, recorded)
 		if index < 0 {
 			continue
 		}
@@ -165,15 +180,19 @@ func parseTraceLine(text string) (map[string]string, bool) {
 
 // probeFor matches a parsed line back to the probe that produced it by the set
 // of expression names, which is what distinguishes probes in the output.
-func probeFor(values map[string]string, probes []model.Probe) int {
-	for i, p := range probes {
+//
+// It takes the names as recorded rather than as requested: a whole-frame request
+// is written to the adapter as this runtime's own way of naming its scope, and
+// that is the name the output comes back under.
+func probeFor(values map[string]string, recorded [][]string) int {
+	for i, exprs := range recorded {
 		matched := 0
-		for _, expr := range p.Record {
+		for _, expr := range exprs {
 			if _, present := values[expr]; present {
 				matched++
 			}
 		}
-		if matched == len(p.Record) && matched > 0 {
+		if matched == len(exprs) && matched > 0 {
 			return i
 		}
 	}

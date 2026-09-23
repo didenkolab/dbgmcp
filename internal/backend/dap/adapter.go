@@ -52,6 +52,16 @@ type Adapter struct {
 	// are skipped rather than delivered. Named per adapter because it is a
 	// property of one implementation, not of the protocol.
 	spuriousEntryStops bool
+
+	// wholeFrameExpr is what this runtime writes to mean "every name in scope
+	// here", for a probe asked to record the whole frame.
+	//
+	// A logpoint evaluates expressions and lets the program run on, so there is
+	// no stop and no frame to enumerate through the protocol. Where the language
+	// itself can name its own scope -- Python's locals() -- one expression does
+	// it. Where it cannot, this is empty and the request is refused by name
+	// rather than answered with something that looks like an answer.
+	wholeFrameExpr string
 }
 
 // Adapters is the registry of runtimes this server accepts. One DAP
@@ -90,8 +100,11 @@ func pythonExe() string {
 }
 
 var python = &Adapter{
-	Language: "python",
-	Install:  "python3 -m pip install debugpy",
+	// locals() is a real expression, evaluated in the frame the probe stopped in,
+	// and comes back as a dict of every name there.
+	wholeFrameExpr: "locals()",
+	Language:       "python",
+	Install:        "python3 -m pip install debugpy",
 
 	// debugpy binds function breakpoints but does not report their location.
 	symbolBreakpointsUsable: false,

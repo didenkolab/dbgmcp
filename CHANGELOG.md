@@ -3,6 +3,18 @@
 All notable changes are recorded here. This project follows [semantic
 versioning](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- **Whole-frame probes work for Python.** `-probe file:line=*` is written to debugpy
+  as `locals()`, so the frame comes back without naming a single expression — the
+  same zero-configuration shape the CI step relies on, now for a second runtime.
+  JavaScript still refuses it, by name: a logpoint evaluates while the program runs
+  on, so there is no stopped frame to enumerate, and the language has no expression
+  naming its own scope. Whether a runtime can do this is a property of that runtime,
+  so it lives in its adapter profile, where it can be wrong for one language only.
+
 ## [0.3.0] - 2026-09-23
 
 ### Added
