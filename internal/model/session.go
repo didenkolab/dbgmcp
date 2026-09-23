@@ -57,6 +57,19 @@ type LaunchRequest struct {
 	TestRun string `json:"test_run,omitempty"`
 	// PID is the process to attach to, meaningful only for LaunchAttach.
 	PID int `json:"pid,omitempty"`
+	// BuildTags are the build tags the target needs to compile.
+	//
+	// Not a detail: a project can keep most of its suite behind a tag, and
+	// without this those tests cannot be debugged at all -- which tends to be
+	// exactly the half that talks to a database and holds the interesting bugs.
+	BuildTags []string `json:"build_tags,omitempty"`
+	// BuildFlags is an escape hatch for anything else the build needs
+	// (-mod=vendor, -race). Passed through verbatim.
+	BuildFlags string `json:"build_flags,omitempty"`
+	// Deterministic asks the runner to switch off whatever randomises test
+	// order. A breakpoint is set in a named test, and a shuffled run puts a
+	// different test in its place.
+	Deterministic bool `json:"deterministic,omitempty"`
 }
 
 type Session struct {

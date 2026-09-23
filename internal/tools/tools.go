@@ -53,6 +53,16 @@ type StartIn struct {
 	// has to know, and it is off by default because recording a stack at every
 	// goroutine creation costs real performance.
 	RecordAncestry bool `json:"record_ancestry,omitempty" jsonschema:"Record where each execution unit was created from, so get_unit_ancestors can answer. Off by default because it slows the target down."`
+
+	// BuildTags matters more than it looks. A project can keep most of its test
+	// suite behind a tag, and without naming the tag that half cannot be built
+	// -- so it cannot be debugged, and it is usually the half that talks to a
+	// database and holds the interesting defects.
+	BuildTags  []string `json:"build_tags,omitempty" jsonschema:"Build tags the target needs in order to compile, for example [\"integration\"]. Without them, a suite kept behind a tag cannot be run at all."`
+	BuildFlags string   `json:"build_flags,omitempty" jsonschema:"Anything else the build needs, passed through verbatim, for example -mod=vendor."`
+	// Deterministic defaults to off so nothing changes for callers who do not
+	// ask, but any agent setting a breakpoint in a named test wants it on.
+	Deterministic bool `json:"deterministic,omitempty" jsonschema:"Switch off test-order randomisation. Set this when a breakpoint is in a named test: a shuffled run puts a different test in its place, which looks like the breakpoint failing."`
 }
 
 type StartOut struct {
@@ -98,6 +108,7 @@ func (r *Registry) startDebugSession(ctx context.Context, _ *mcp.CallToolRequest
 	req := model.LaunchRequest{
 		Mode: mode, Target: in.Target, WorkDir: in.WorkDir,
 		TestRun: in.TestRun, Args: in.Args, Env: env, PID: in.PID,
+		BuildTags: in.BuildTags, BuildFlags: in.BuildFlags, Deterministic: in.Deterministic,
 	}
 	if err := b.Launch(ctx, req); err != nil {
 		return fail[StartOut]("%s", err.Error())

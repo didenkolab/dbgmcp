@@ -62,7 +62,30 @@ type supervisor struct {
 // and an agent cannot unpick that afterwards.
 type redirectPaths struct{ stdout, stderr string }
 
-func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, redirects redirectPaths, args []string, testRun string) ([]string, bool, error) {
+// buildOptions is what the compile step needs, gathered so the flag string is
+// assembled in one place rather than spliced together at the call site.
+type buildOptions struct {
+	tags          []string
+	extra         string
+	deterministic bool
+}
+
+func (b buildOptions) flags() string {
+	var parts []string
+	if len(b.tags) > 0 {
+		// Commas, not spaces. A space inside a build-flags value is a new
+		// argument by the time the Go tool sees it, so "-tags=integration
+		// devsecrets" arrives as a tag plus a second package, and the build dies
+		// with "with multiple packages, -o must refer to a directory".
+		parts = append(parts, "-tags="+strings.Join(b.tags, ","))
+	}
+	if b.extra != "" {
+		parts = append(parts, b.extra)
+	}
+	return strings.Join(parts, " ")
+}
+
+func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, redirects redirectPaths, args []string, testRun string, build buildOptions) ([]string, bool, error) {
 	var sub string
 	switch mode {
 	case model.LaunchTest:
@@ -89,6 +112,13 @@ func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, redir
 	if buildOutput != "" && (mode == model.LaunchTest || mode == model.LaunchDebug) {
 		out = append(out, "--output="+buildOutput)
 	}
+	// Whatever the compile step needs, for the same two modes. A project can
+	// keep most of its suite behind a build tag, and without naming the tag that
+	// half cannot be built -- so it cannot be debugged, and it is usually the
+	// half that talks to a database and holds the interesting defects.
+	if flags := build.flags(); flags != "" && (mode == model.LaunchTest || mode == model.LaunchDebug) {
+		out = append(out, "--build-flags="+flags)
+	}
 	// An attached process already owns its streams; they go wherever they were
 	// going before the debugger arrived, and redirecting them is not ours to do.
 	if !mode.IsAttach() {
@@ -104,8 +134,14 @@ func launchArgs(mode model.LaunchMode, target, socket, buildOutput string, redir
 	}
 
 	passthrough := args
-	if mode == model.LaunchTest && testRun != "" {
-		passthrough = append([]string{"-test.run", testRun}, passthrough...)
+	if mode == model.LaunchTest {
+		if testRun != "" {
+			passthrough = append([]string{"-test.run", testRun}, passthrough...)
+		}
+		// A shuffled run puts a different test where the breakpoint was set.
+		if build.deterministic {
+			passthrough = append([]string{"-test.shuffle=off"}, passthrough...)
+		}
 	}
 	if len(passthrough) > 0 {
 		out = append(out, "--")
@@ -140,7 +176,8 @@ func (s *supervisor) start(ctx context.Context, dlvPath string, req model.Launch
 	if req.Mode.IsAttach() {
 		target = strconv.Itoa(req.PID)
 	}
-	args, optimisationsDisabled, err := launchArgs(req.Mode, target, socket, buildOutput, redirects, req.Args, req.TestRun)
+	build := buildOptions{tags: req.BuildTags, extra: req.BuildFlags, deterministic: req.Deterministic}
+	args, optimisationsDisabled, err := launchArgs(req.Mode, target, socket, buildOutput, redirects, req.Args, req.TestRun, build)
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		return false, err

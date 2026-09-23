@@ -44,7 +44,7 @@ func TestEveryLaunchModeIsHandledDeliberately(t *testing.T) {
 		}
 
 		args, optimisationsDisabled, err := launchArgs(mode, "target", "/tmp/s.sock", "/tmp/o.bin",
-			redirects, nil, "TestFoo")
+			redirects, nil, "TestFoo", buildOptions{})
 		if err != nil {
 			t.Errorf("%s: %v", mode, err)
 			continue
@@ -86,6 +86,55 @@ func TestEveryStepKindIsAccepted(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "unknown step kind") {
 			t.Errorf("%s is not handled", kind)
+		}
+	}
+}
+
+func TestBuildTagsReachTheCompiler(t *testing.T) {
+	// A project can keep most of its suite behind a tag. Without this the tagged
+	// half cannot be built, so it cannot be debugged -- and that is usually the
+	// half that talks to a database and holds the interesting defects.
+	build := buildOptions{tags: []string{"integration", "devsecrets"}}
+	args, _, err := launchArgs(model.LaunchTest, ".", "/tmp/s.sock", "/tmp/o.bin",
+		redirectPaths{}, nil, "TestCharge", build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := joined(args)
+	// Comma-separated, because a space in a build-flags value becomes a separate
+	// argument to the Go tool and the build fails on a phantom second package.
+	if !strings.Contains(got, "--build-flags=-tags=integration,devsecrets") {
+		t.Errorf("build tags did not reach the compiler correctly: %s", got)
+	}
+	if strings.Contains(got, "integration devsecrets") {
+		t.Errorf("tags were joined with a space, which the Go tool reads as two arguments: %s", got)
+	}
+}
+
+func TestDeterminismSwitchesOffShuffling(t *testing.T) {
+	// A shuffled run puts a different test where the breakpoint was set, which
+	// looks like the breakpoint not working.
+	args, _, err := launchArgs(model.LaunchTest, ".", "/tmp/s.sock", "/tmp/o.bin",
+		redirectPaths{}, nil, "TestCharge", buildOptions{deterministic: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(joined(args), "-test.shuffle=off") {
+		t.Errorf("shuffling was not switched off: %s", joined(args))
+	}
+}
+
+func TestBuildFlagsAreNotSentWhereNothingIsBuilt(t *testing.T) {
+	// exec and attach have no build step; sending build flags to them is a
+	// request Delve cannot honour.
+	for _, mode := range []model.LaunchMode{model.LaunchExec, model.LaunchAttach} {
+		args, _, err := launchArgs(mode, "target", "/tmp/s.sock", "/tmp/o.bin",
+			redirectPaths{}, nil, "", buildOptions{tags: []string{"integration"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(joined(args), "build-flags") {
+			t.Errorf("%s: build flags sent to a mode that builds nothing", mode)
 		}
 	}
 }

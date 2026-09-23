@@ -90,6 +90,17 @@ dbgmcp trace -dir . -mode test -target ./internal/billing \
   -format md -out trace.md
 ```
 
+A suite kept behind build tags needs them named, or it cannot be built at all — and that is usually
+the half that talks to a database:
+
+```bash
+dbgmcp trace -tags "integration devsecrets" -test TestCharge \
+  -probe internal/billing/charge.go:88=amount
+```
+
+Test-order randomisation is switched off by default, because a shuffled run puts a different test
+where the probe expects one. Pass `-shuffle` to leave it on.
+
 It re-runs the target under the debugger, records the expressions, reads the transcript and writes a
 report: what was noticed first, the values it rests on next, the full table last. It exits zero even
 when it notices something -- the failing test fails the build, not the diagnostic, because a

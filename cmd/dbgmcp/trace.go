@@ -38,6 +38,9 @@ func traceCommand(args []string) int {
 		format   = fs.String("format", "md", "md or json")
 		out      = fs.String("out", "-", "file to write, or - for stdout")
 		maxHits  = fs.Int("max-hits", 0, "stop each probe after this many hits (0 = until the target ends)")
+		tags     = fs.String("tags", "", "build tags the target needs, space or comma separated")
+		buildFlg = fs.String("build-flags", "", "anything else the build needs, passed through verbatim")
+		shuffle  = fs.Bool("shuffle", false, "leave test-order randomisation on (off by default, so a named test stays where the probe expects it)")
 	)
 	var probeFlags stringList
 	fs.Var(&probeFlags, "probe", "where and what to record: file:line=expr,expr or symbol=expr,expr (repeatable)")
@@ -77,6 +80,7 @@ func traceCommand(args []string) int {
 
 	req := model.LaunchRequest{
 		Mode: model.LaunchMode(*mode), Target: *target, WorkDir: workDir, TestRun: *testRun,
+		BuildTags: splitTags(*tags), BuildFlags: *buildFlg, Deterministic: !*shuffle,
 	}
 	if err := b.Launch(ctx, req); err != nil {
 		fmt.Fprintln(os.Stderr, "dbgmcp trace:", err)
@@ -126,6 +130,11 @@ debugger, record what you want to see, and leave an artifact.
     -test TestSubtotal \
     -probe internal/billing/cart.go:26=total,i
 
+A suite kept behind build tags needs them named, or it cannot be built at all:
+
+  dbgmcp trace -tags "integration devsecrets" -test TestCharge \\
+    -probe internal/billing/charge.go:88=amount
+
 Options:
 `
 
@@ -168,6 +177,18 @@ func parseProbes(specs []string, workDir string, maxHits int) ([]model.Probe, er
 		out = append(out, probe)
 	}
 	return out, nil
+}
+
+// splitTags accepts either separator, because a project writes its tags both
+// ways and neither spelling should be the one that fails.
+func splitTags(raw string) []string {
+	var out []string
+	for _, t := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' }) {
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func backendFor(language string) (backend.Backend, error) {
