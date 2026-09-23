@@ -239,3 +239,94 @@ func withLabels(detail, labelA, labelB string) string {
 	detail = strings.ReplaceAll(detail, "the second", "`"+labelB+"`")
 	return detail
 }
+
+// renderExplainMarkdown writes one value's history.
+//
+// The last write leads, because "why is this wrong" is answered by where it
+// became wrong, and the chain below it is how that claim gets checked. Whether
+// the history is complete is stated next to the answer rather than at the end: a
+// history cut short by a budget or a timeout can be missing the write that matters,
+// and a reader who does not know that draws a confident wrong conclusion.
+func renderExplainMarkdown(req model.LaunchRequest, h model.ValueHistory) string {
+	var b strings.Builder
+
+	b.WriteString("# Value history\n\n")
+	fmt.Fprintf(&b, "`%s` in `%s`", h.Expression, scopeOf(h.Scope))
+	if req.TestRun != "" {
+		fmt.Fprintf(&b, ", test `%s`", req.TestRun)
+	}
+	b.WriteString("\n\n")
+
+	switch {
+	case len(h.Writes) == 0:
+		b.WriteString("## It never changed\n\n")
+		fmt.Fprintf(&b, "`%s` held `%s` for the whole life of its frame. Whatever is wrong with it was\n",
+			h.Expression, escapeCell(h.Initial))
+		b.WriteString("wrong before this scope, so follow the value that produced it instead.\n\n")
+	default:
+		last := h.Writes[len(h.Writes)-1]
+		b.WriteString("## Last change\n\n")
+		fmt.Fprintf(&b, "`%s` became **%s** (from `%s`)\n\n", h.Expression, escapeCell(last.To), escapeCell(last.From))
+		if last.File != "" {
+			fmt.Fprintf(&b, "`%s:%d`", last.File, last.Line)
+			if last.Function != "" {
+				fmt.Fprintf(&b, " in `%s`", last.Function)
+			}
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "It started as `%s` and changed %d time(s).\n\n", escapeCell(h.Initial), len(h.Writes))
+	}
+
+	b.WriteString(explainCompleteness(h))
+
+	if len(h.Writes) > 0 {
+		b.WriteString("## Every change, in order\n\n")
+		b.WriteString("| # | from | to | where |\n|---:|---|---|---|\n")
+		for _, w := range h.Writes {
+			where := "—"
+			if w.File != "" {
+				where = fmt.Sprintf("%s:%d", shortPath(w.File), w.Line)
+				if w.Function != "" {
+					where = fmt.Sprintf("%s (%s)", where, w.Function)
+				}
+			}
+			fmt.Fprintf(&b, "| %d | %s | %s | %s |\n", w.Seq, escapeCell(w.From), escapeCell(w.To), where)
+		}
+		b.WriteString("\n")
+
+		// The stack of the last write, which is the one a reader acts on. Earlier
+		// stacks are in the JSON; printing them all buries the answer.
+		if last := h.Writes[len(h.Writes)-1]; len(last.Frames) > 0 {
+			b.WriteString("## Who made that change\n\n```\n")
+			for _, f := range last.Frames {
+				fmt.Fprintf(&b, "%s\n    %s:%d\n", f.Function, shortPath(f.File), f.Line)
+			}
+			b.WriteString("```\n")
+		}
+	}
+	return b.String()
+}
+
+func scopeOf(l model.Location) string {
+	if l.Symbol != "" {
+		return l.Symbol
+	}
+	return fmt.Sprintf("%s:%d", shortPath(l.File), l.Line)
+}
+
+// explainCompleteness says whether the history can be trusted to be the whole
+// story, in the words the status actually means.
+func explainCompleteness(h model.ValueHistory) string {
+	switch h.Status {
+	case model.ExplainFrameReturned:
+		return "The frame holding it returned, so this is the complete history: no change is missing.\n\n"
+	case model.ExplainBudgetReached:
+		return "**Cut short by the write budget.** There may be later changes, including the one that matters. Raise `-max-writes`.\n\n"
+	case model.ExplainExited:
+		return "**The program ended first.** The frame never returned normally, so treat this as partial.\n\n"
+	case model.ExplainTimeout:
+		return "**Timed out.** Later changes may exist. Raise `-timeout`, or narrow the call with `-when`.\n\n"
+	default:
+		return fmt.Sprintf("Status `%s`.\n\n", h.Status)
+	}
+}

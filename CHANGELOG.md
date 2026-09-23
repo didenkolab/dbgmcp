@@ -5,7 +5,22 @@ versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+
+- **`dbgmcp explain`** — follow one value from a command line. The tool had been available to an
+  agent since the start and to a pipeline not at all, so this server advertised three questions it
+  answers in one call and let a script reach two of them. The report leads with the last change and
+  states whether the history is complete, because one cut short by a budget or a timeout can be
+  missing the write that explains everything.
+
 ### Fixed
+
+- **A refused watchpoint now names the reason that applies.** Every refusal drew the same advice
+  about the hardware limits, so a value too wide to watch — a string, a slice, a struct — was met
+  with a note about having too many watchpoints, sending the reader to count watchpoints instead of
+  looking at the type. Delve refuses for four distinct reasons and each now gets its own next step.
+  Ordering the checks is load-bearing: one refusal contains another as a substring, and the broader
+  one used to swallow it.
 
 - **`value_froze` no longer reports a latch.** A flag that flips once and then never moves again
   satisfied the rule's "was it genuinely changing before" check by having nothing for it to examine:

@@ -151,6 +151,16 @@ The report leads with the first divergence and the values on both sides, under y
 shuffling is always off for a diff and is not a flag — two runs of a shuffled suite run different
 tests, so the divergence found would be the shuffle.
 
+Following one value is a command as well, so nothing an agent can ask is out of reach from a script:
+
+```bash
+dbgmcp explain -dir . -mode test -target ./internal/billing \
+  -test TestSubtotal -scope billing.Subtotal -expr total
+```
+
+Read the completeness line before acting on it: `frame_returned` means nothing is missing, while a
+budget or a timeout means later changes may exist — including the one that matters.
+
 ## When it does not work
 
 `dbgmcp doctor` first: it reports the platform, the debugger in use and its version, and on Linux

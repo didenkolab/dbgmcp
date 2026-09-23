@@ -163,6 +163,18 @@ The labels are the reader's, and they appear in the report rather than "the firs
 is always off here and is not a flag: two runs of a shuffled suite execute different tests, so the
 divergence found would be the shuffle.
 
+And the third question is a command too, so a script reaches all three:
+
+```bash
+dbgmcp explain -dir . -mode test -target ./internal/billing \
+  -test TestSubtotal -scope billing.Subtotal -expr total \
+  -format md -out why.md
+```
+
+The report leads with the last change -- where the value became what it is -- and says whether the
+history is complete. That distinction matters: one cut short by a budget or a timeout can be missing
+the write that explains everything, and a reader who is not told draws a confident wrong conclusion.
+
 It re-runs the target under the debugger, records the expressions, reads the transcript and writes a
 report: what was noticed first, the values it rests on next, the full table last. It exits zero even
 when it notices something -- the failing test fails the build, not the diagnostic, because a

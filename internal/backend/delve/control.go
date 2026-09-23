@@ -124,13 +124,34 @@ func (b *Backend) SetWatchpoint(_ context.Context, frameIndex int, expr string, 
 }
 
 // watchpointAdvice turns Delve's terse refusals into the next thing to try.
-// "could not find symbol value for total" is the commonest one and reads like a
-// missing variable, when it usually means the program has not reached the
-// declaration yet -- an agent told only the former will retry the same call.
+//
+// Each branch names the reason that actually applies. The generic fallback used to
+// answer every refusal, so a value too large to watch was met with advice about
+// having too many watchpoints -- sending the reader to count watchpoints instead of
+// looking at the type.
 func watchpointAdvice(err error) string {
-	if strings.Contains(err.Error(), "could not find symbol value") {
+	text := err.Error()
+	switch {
+	case strings.Contains(text, "could not find symbol value"):
+		// Reads like a missing variable and almost never is: an agent told only
+		// Delve's wording retries the identical call.
 		return " A watchpoint needs the variable to exist already: stopping at a function's entry is " +
 			"before its locals are declared. Step past the declaration, then set the watchpoint."
+	case strings.Contains(text, "can not watch variable of type"):
+		// Delve refuses anything wider than a pointer, because a hardware
+		// watchpoint covers one machine word.
+		return " A watchpoint covers at most one machine word (8 bytes on a 64-bit target), so a string, " +
+			"slice, interface, map or struct cannot be watched whole. Watch a field inside it that fits -- " +
+			"a length, an id, a pointer -- or record the value with trace_execution at the lines that assign it."
+	case strings.Contains(text, "stack allocated variable for reads"):
+		// Checked before the broader "can not watch" below, which this contains.
+		return " Reads of a stack variable cannot be watched; watch writes instead, which is usually the " +
+			"question anyway: what changed this value."
+	case strings.Contains(text, "can not watch"):
+		// No address of its own: a register-resident or synthesised value.
+		return " That expression has no address of its own to watch -- the compiler keeps some values in " +
+			"registers, and a computed expression never had one. Watch a plain variable, or record it with " +
+			"trace_execution at the lines that assign it."
 	}
 	return " Watchpoints are a hardware feature: at most four can exist at once, and each is bound to " +
 		"the stack frame it was set in, so it disappears when that frame returns."

@@ -158,23 +158,11 @@ func parseProbes(specs []string, workDir string, maxHits int) ([]model.Probe, er
 			}
 		}
 
-		probe := model.Probe{Record: record, MaxHits: maxHits}
-		// A trailing ":<number>" makes it a file and line; anything else is a
-		// symbol. Package-qualified symbols contain dots, not colons, so the two
-		// do not collide.
-		if file, lineText, hasLine := strings.Cut(where, ":"); hasLine {
-			line, err := strconv.Atoi(lineText)
-			if err != nil {
-				return nil, fmt.Errorf("probe %q: %q is not a line number", spec, lineText)
-			}
-			if !filepath.IsAbs(file) {
-				file = filepath.Join(workDir, file)
-			}
-			probe.Location = model.Location{File: file, Line: line}
-		} else {
-			probe.Location = model.Location{Symbol: where}
+		location, err := parseLocation(where, workDir)
+		if err != nil {
+			return nil, fmt.Errorf("probe %q: %w", spec, err)
 		}
-		out = append(out, probe)
+		out = append(out, model.Probe{Location: location, Record: record, MaxHits: maxHits})
 	}
 	return out, nil
 }
@@ -198,4 +186,23 @@ func backendFor(language string) (backend.Backend, error) {
 	default:
 		return dap.New(language)
 	}
+}
+
+// parseLocation reads "file:line" or a symbol, and is shared by every command
+// that takes a place in the source.
+//
+// A trailing ":<number>" makes it a file and line; anything else is a symbol.
+// Package-qualified symbols contain dots, not colons, so the two cannot collide.
+func parseLocation(where, workDir string) (model.Location, error) {
+	if file, lineText, hasLine := strings.Cut(where, ":"); hasLine {
+		line, err := strconv.Atoi(lineText)
+		if err != nil {
+			return model.Location{}, fmt.Errorf("%q is not a line number", lineText)
+		}
+		if !filepath.IsAbs(file) {
+			file = filepath.Join(workDir, file)
+		}
+		return model.Location{File: file, Line: line}, nil
+	}
+	return model.Location{Symbol: where}, nil
 }

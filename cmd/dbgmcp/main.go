@@ -30,6 +30,8 @@ func main() {
 			os.Exit(traceCommand(os.Args[2:]))
 		case "diff":
 			os.Exit(diffCommand(os.Args[2:]))
+		case "explain":
+			os.Exit(explainCommand(os.Args[2:]))
 		case "help", "--help", "-h":
 			usage()
 			return
@@ -58,10 +60,11 @@ func usage() {
   dbgmcp              serve MCP over stdio (how an agent uses it)
   dbgmcp trace ...    record expressions while a target runs, and write a report
   dbgmcp diff ...     run the same probes twice and report the first divergence
+  dbgmcp explain ...  follow one value and write out every change to it
   dbgmcp doctor       report the platform and the debugger in use
   dbgmcp version
 
-Run "dbgmcp trace -h" or "dbgmcp diff -h" for their options.
+Each of trace, diff and explain takes -h for its own options.
 `)
 }
 
