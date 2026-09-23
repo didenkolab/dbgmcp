@@ -1,0 +1,6 @@
+{
+  "name": "buggy-js",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deliberately buggy fixture for the JavaScript backend."
+}

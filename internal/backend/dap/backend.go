@@ -23,6 +23,11 @@ type Backend struct {
 	mu     sync.Mutex
 	cmd    *exec.Cmd
 	client *client
+	// parent is the session that launched, when the adapter answers through a
+	// tree. It owns nothing the agent asks about -- breakpoints and stops live
+	// on the child -- but it has to stay connected, because closing it takes
+	// the adapter down.
+	parent *client
 	caps   initializeResponse
 
 	// breakpoints is kept per file because DAP's setBreakpoints *replaces* every
@@ -46,12 +51,26 @@ type trackedBreakpoint struct {
 	localID  int
 	remoteID int
 	spec     sourceBreakpoint
-	verified bool
-	record   []string
+	// boundLine is where the adapter actually put it, which is not always the
+	// line asked for: an adapter may move a breakpoint to the next executable
+	// statement, and a stop then lands on a line nobody requested.
+	boundLine int
+	verified  bool
+	record    []string
 }
 
 func New(language string) (*Backend, error) {
 	a, err := Lookup(language)
+	if err != nil {
+		return nil, err
+	}
+	return &Backend{adapter: a, breakpoints: map[string][]trackedBreakpoint{}}, nil
+}
+
+// NewUnderConstruction builds a backend on a profile that is not offered yet.
+// Only that profile's own tests call it.
+func NewUnderConstruction(language string) (*Backend, error) {
+	a, err := NewDevelopmentAdapter(language)
 	if err != nil {
 		return nil, err
 	}
@@ -108,95 +127,167 @@ func (b *Backend) Launch(ctx context.Context, req model.LaunchRequest) error {
 	if err != nil {
 		return err
 	}
-	cmd, err := b.adapter.command()
+	// The adapter starts itself, because how to reach it differs per runtime.
+	// Its own working directory is not set here: the directory that matters
+	// travels inside the launch request, and setting Dir after Start would do
+	// nothing while looking like configuration.
+	cmd, connection, again, err := b.adapter.start()
 	if err != nil {
 		return err
-	}
-	cmd.Dir = req.WorkDir
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("could not start the %s debug adapter: %w", b.adapter.Language, err)
 	}
 
-	cl := newClient(newConn(stdin, stdout))
+	cl := newClient(connection)
 	b.mu.Lock()
 	b.cmd, b.client = cmd, cl
 	b.mu.Unlock()
 
-	body, err := cl.send(ctx, "initialize", map[string]any{
-		"clientID": "dbgmcp", "adapterID": b.adapter.Language,
-		"linesStartAt1": true, "columnsStartAt1": true,
-		"pathFormat": "path", "supportsVariableType": true,
-	}, requestTimeout)
+	caps, err := b.handshake(ctx, cl, launchArgs, "launch")
 	if err != nil {
 		b.kill()
-		return fmt.Errorf("the %s adapter refused to initialise: %w", b.adapter.Language, err)
+		return err
 	}
-	var caps initializeResponse
-	_ = json.Unmarshal(body, &caps)
 	b.mu.Lock()
 	b.caps = caps
 	b.mu.Unlock()
 
-	// Sent, not awaited. See sendAsync: the response to launch may not arrive
-	// until after configurationDone, which cannot be sent until the initialized
-	// event, which does not arrive until launch has been sent.
-	launchReply, err := cl.sendAsync("launch", launchArgs)
-	if err != nil {
-		b.kill()
-		return fmt.Errorf("could not launch under the %s adapter: %w", b.adapter.Language, err)
-	}
-
-	// The adapter signals readiness for configuration with an event, not a
-	// response, and configurationDone before it is a protocol error.
-	select {
-	case <-cl.initEvent:
-	case <-cl.terminated:
-		b.kill()
-		return fmt.Errorf("the %s adapter exited before it was ready to configure", b.adapter.Language)
-	case <-time.After(requestTimeout):
-		b.kill()
-		return fmt.Errorf("the %s adapter never reported that it was ready to configure", b.adapter.Language)
-	case <-ctx.Done():
-		b.kill()
-		return ctx.Err()
-	}
-
-	if caps.SupportsConfigurationDoneRequest {
-		if _, err := cl.send(ctx, "configurationDone", map[string]any{}, requestTimeout); err != nil {
+	// An adapter may answer through a tree rather than a single session: it
+	// launches the process and then asks the client to debug it through a
+	// second session. Everything the agent asks about lives on that child, so
+	// it becomes the active session and the launcher is demoted to lifecycle.
+	if again != nil {
+		if err := b.adoptChildSession(ctx, cl, again); err != nil {
 			b.kill()
 			return err
 		}
 	}
 
-	// Only now can the launch have completed.
-	if _, err := awaitReply(ctx, "launch", launchReply, 3*time.Minute); err != nil {
-		b.kill()
-		return fmt.Errorf("could not launch under the %s adapter: %w", b.adapter.Language, err)
-	}
-
 	// stopOnEntry means the first stop is the entry point. Consuming it here is
 	// what makes "the target is stopped, set your breakpoints" true on return.
+	//
+	// Read from the ACTIVE session, which after a child adoption is no longer
+	// the one that launched. Waiting on the launcher's channel is a stop that
+	// never arrives, and it surfaces as a minute of silence followed by the
+	// entry stop being mistaken for the first breakpoint.
+	b.mu.Lock()
+	active := b.client
+	b.mu.Unlock()
 	select {
-	case ev := <-cl.stopped:
+	case ev := <-active.stopped:
 		b.mu.Lock()
 		b.currentThread = ev.ThreadID
 		b.mu.Unlock()
-	case <-cl.terminated:
+	case <-active.terminated:
 		b.mu.Lock()
 		b.exited = true
 		b.mu.Unlock()
-	case <-time.After(requestTimeout):
-		// Some adapters do not honour stopOnEntry; the session is still usable.
+	case <-time.After(15 * time.Second):
+		// Some adapters do not honour stopOnEntry; the session is still usable,
+		// and waiting a full minute to find that out helps nobody.
 	}
+
+	// Drain any further stops that arrive before the agent has resumed
+	// anything. js-debug announces the entry stop twice, and the duplicate is
+	// otherwise collected by the next wait and read as the first breakpoint --
+	// which lands the agent in a frame it never asked for, evaluating names that
+	// do not exist there. Nothing can legitimately stop again before a resume,
+	// so anything here is the adapter repeating itself.
+	for draining := true; draining; {
+		select {
+		case <-active.stopped:
+		case <-time.After(300 * time.Millisecond):
+			draining = false
+		}
+	}
+	return nil
+}
+
+// handshake runs the initialize/launch/configurationDone dance on one session.
+//
+// The ordering is the part every DAP client gets wrong once: the response to
+// launch may not arrive until after configurationDone, which cannot be sent
+// before the initialized event, which does not arrive until launch has been
+// sent. Waiting for the launch response first is a deadlock in which both sides
+// are following the specification.
+func (b *Backend) handshake(ctx context.Context, cl *client, args map[string]any, verb string) (initializeResponse, error) {
+	var caps initializeResponse
+
+	body, err := cl.send(ctx, "initialize", map[string]any{
+		"clientID": "dbgmcp", "adapterID": b.adapter.Language,
+		"linesStartAt1": true, "columnsStartAt1": true,
+		"pathFormat": "path", "supportsVariableType": true,
+		// Declared because the adapter may ask us to open another session, and
+		// an adapter that does not know we can will not offer.
+		"supportsStartDebuggingRequest": true,
+	}, requestTimeout)
+	if err != nil {
+		return caps, fmt.Errorf("the %s adapter refused to initialise: %w", b.adapter.Language, err)
+	}
+	_ = json.Unmarshal(body, &caps)
+
+	reply, err := cl.sendAsync(verb, args)
+	if err != nil {
+		return caps, fmt.Errorf("could not %s under the %s adapter: %w", verb, b.adapter.Language, err)
+	}
+
+	select {
+	case <-cl.initEvent:
+	case <-cl.terminated:
+		return caps, fmt.Errorf("the %s adapter exited before it was ready to configure", b.adapter.Language)
+	case <-time.After(requestTimeout):
+		return caps, fmt.Errorf("the %s adapter never reported that it was ready to configure", b.adapter.Language)
+	case <-ctx.Done():
+		return caps, ctx.Err()
+	}
+
+	if caps.SupportsConfigurationDoneRequest {
+		if _, err := cl.send(ctx, "configurationDone", map[string]any{}, requestTimeout); err != nil {
+			return caps, err
+		}
+	}
+	if _, err := awaitReply(ctx, verb, reply, 3*time.Minute); err != nil {
+		return caps, fmt.Errorf("could not %s under the %s adapter: %w", verb, b.adapter.Language, err)
+	}
+	return caps, nil
+}
+
+// adoptChildSession answers the adapter's request for a second session and makes
+// it the one everything else uses.
+func (b *Backend) adoptChildSession(ctx context.Context, parent *client, again dialer) error {
+	var request json.RawMessage
+	select {
+	case request = <-parent.childSession:
+	case <-time.After(30 * time.Second):
+		// Not every launch produces one -- a target that exits immediately may
+		// not -- so this is not fatal on its own.
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	var ask struct {
+		Request       string         `json:"request"`
+		Configuration map[string]any `json:"configuration"`
+	}
+	if err := json.Unmarshal(request, &ask); err != nil {
+		return fmt.Errorf("the adapter asked for a child session in a shape this server cannot read: %w", err)
+	}
+	if ask.Request == "" {
+		ask.Request = "attach"
+	}
+
+	connection, err := again()
+	if err != nil {
+		return err
+	}
+	child := newClient(connection)
+	if _, err := b.handshake(ctx, child, ask.Configuration, ask.Request); err != nil {
+		child.close()
+		return fmt.Errorf("the child session refused to start: %w", err)
+	}
+
+	b.mu.Lock()
+	b.parent, b.client = parent, child
+	b.mu.Unlock()
 	return nil
 }
 
@@ -218,11 +309,15 @@ func (b *Backend) Stop(ctx context.Context) error {
 
 func (b *Backend) kill() {
 	b.mu.Lock()
-	cmd, cl := b.cmd, b.client
-	b.cmd, b.client = nil, nil
+	cmd, cl, parent := b.cmd, b.client, b.parent
+	b.cmd, b.client, b.parent = nil, nil, nil
 	b.mu.Unlock()
 	if cl != nil {
 		cl.close()
+	}
+	// The launcher goes too: it is what holds the adapter open.
+	if parent != nil && parent != cl {
+		parent.close()
 	}
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
@@ -271,6 +366,7 @@ func (b *Backend) syncBreakpoints(ctx context.Context, file string) ([]breakpoin
 		if i < len(resp.Breakpoints) {
 			b.breakpoints[file][i].remoteID = resp.Breakpoints[i].ID
 			b.breakpoints[file][i].verified = resp.Breakpoints[i].Verified
+			b.breakpoints[file][i].boundLine = resp.Breakpoints[i].Line
 		}
 	}
 	b.mu.Unlock()

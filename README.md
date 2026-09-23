@@ -131,8 +131,14 @@ wherever the semantics match, so one agent and one skill work with an IDE and wi
 
 Stated plainly, so nobody mistakes the test suite for more than it is.
 
-- **Go and Python.** Go goes through Delve's native API, Python through DAP. JavaScript and Ruby
-  are the same DAP backend plus an adapter profile, and are not written yet.
+- **Go and Python.** Go goes through Delve's native API, Python through DAP.
+- **JavaScript is written and not offered.** Its profile launches, steps, binds breakpoints and
+  reports hit counts, and js-debug's session tree is handled -- it asks the client to open a second
+  session for the process it launched, and stops live there. What does not work is that a stop does
+  not reliably land in the frame the breakpoint named, so evaluating a local in that frame fails.
+  Offering it would mean declaring `set_variable` and `eval_calls_functions` supported while they
+  are not, which is the dishonesty the conformance suite exists to catch. Run its suite with
+  `DBGMCP_NODE_WIP=1 go test ./internal/backend/dap/ -run TestNodeConformance`: five of ten pass.
 - **Python has a smaller capability set, and says so.** No watchpoints, no breakpoints by symbol
   (debugpy binds them but reports no location, so an agent cannot know where it will stop), no
   hit counts, no ancestry. `describe_backend` reports each of these, and the conformance suite

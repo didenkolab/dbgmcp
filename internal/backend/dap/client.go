@@ -5,9 +5,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
+
+// truncate keeps a traced frame readable. The trace exists to show the shape of
+// a conversation, not to reproduce it.
+func truncate(s string, n int) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) > n {
+		s = s[:n] + "..."
+	}
+	return " " + s
+}
 
 // StoppedEvent is what the adapter reports when the debuggee halts.
 type StoppedEvent struct {
@@ -43,6 +57,14 @@ type client struct {
 	stopped    chan StoppedEvent
 	terminated chan struct{}
 	initEvent  chan struct{}
+	// childSession carries a reverse request asking us to open another session.
+	//
+	// DAP is not purely client-to-adapter: js-debug launches a process and then
+	// asks the client to debug it through a SECOND session, because in its model
+	// one adapter serves a tree of targets. The stopped events and the
+	// breakpoints live on the child, so a client that ignores this request
+	// connects successfully and then waits forever.
+	childSession chan json.RawMessage
 
 	outputMu sync.Mutex
 	output   []OutputEvent
@@ -53,12 +75,13 @@ type client struct {
 
 func newClient(c *conn) *client {
 	cl := &client{
-		conn:       c,
-		pending:    map[int]chan Message{},
-		stopped:    make(chan StoppedEvent, 64),
-		terminated: make(chan struct{}),
-		initEvent:  make(chan struct{}),
-		done:       make(chan struct{}),
+		conn:         c,
+		pending:      map[int]chan Message{},
+		stopped:      make(chan StoppedEvent, 64),
+		terminated:   make(chan struct{}),
+		initEvent:    make(chan struct{}),
+		childSession: make(chan json.RawMessage, 4),
+		done:         make(chan struct{}),
 	}
 	go cl.readLoop()
 	return cl
@@ -85,7 +108,14 @@ func (c *client) readLoop() {
 			return
 		}
 
+		if os.Getenv("DBGMCP_DAP_TRACE") != "" {
+			fmt.Fprintf(os.Stderr, "<- %s %s%s\n", m.Type, m.Event+m.Command, truncate(string(m.Body), 160))
+		}
 		switch m.Type {
+		case "request":
+			// Answering is not optional: js-debug waits for the response before
+			// the child session becomes usable.
+			c.answer(m)
 		case "response":
 			c.mu.Lock()
 			ch, waiting := c.pending[m.RequestSeq]
@@ -165,7 +195,7 @@ func awaitReply(ctx context.Context, command string, reply <-chan Message, timeo
 			return nil, fmt.Errorf("the debug adapter exited while handling %s", command)
 		}
 		if m.Success == nil || !*m.Success {
-			return nil, &RequestError{Command: command, Reason: m.Message}
+			return nil, &RequestError{Command: command, Reason: refusalReason(m)}
 		}
 		return m.Body, nil
 	case <-time.After(timeout):
@@ -214,7 +244,7 @@ func (c *client) send(ctx context.Context, command string, args any, timeout tim
 			return nil, fmt.Errorf("the debug adapter exited while handling %s", command)
 		}
 		if m.Success == nil || !*m.Success {
-			return nil, &RequestError{Command: command, Reason: m.Message}
+			return nil, &RequestError{Command: command, Reason: refusalReason(m)}
 		}
 		return m.Body, nil
 	case <-time.After(timeout):
@@ -227,7 +257,49 @@ func (c *client) send(ctx context.Context, command string, args any, timeout tim
 	}
 }
 
+// refusalReason digs the adapter's own words out of a failed response.
+//
+// The protocol offers two places and adapters disagree about which to use: a
+// short `message` at the top, and a structured `error` inside the body. js-debug
+// fills only the second, so reading only the first threw away the sentence that
+// explains the failure -- "ReferenceError: it is not defined" became "refused by
+// the debug adapter", and a diagnosable problem became a mystery.
+func refusalReason(m Message) string {
+	var body struct {
+		Error struct {
+			Format    string            `json:"format"`
+			Variables map[string]string `json:"variables"`
+		} `json:"error"`
+	}
+	if len(m.Body) > 0 && json.Unmarshal(m.Body, &body) == nil && body.Error.Format != "" {
+		reason := body.Error.Format
+		// The format is a template with {name} placeholders filled from
+		// variables; leaving them unsubstituted is worse than useless.
+		for name, value := range body.Error.Variables {
+			reason = strings.ReplaceAll(reason, "{"+name+"}", value)
+		}
+		return strings.TrimSpace(reason)
+	}
+	return m.Message
+}
+
 // drainOutput returns what the debuggee has printed and clears the buffer.
+// answer replies to a reverse request. Unknown ones are acknowledged rather
+// than refused: an adapter asking something this client does not implement
+// should carry on, not stall.
+func (c *client) answer(m Message) {
+	if m.Command == "startDebugging" {
+		select {
+		case c.childSession <- m.Arguments:
+		default:
+		}
+	}
+	success := true
+	_ = c.conn.write(Message{
+		Seq: 0, Type: "response", RequestSeq: m.Seq, Command: m.Command, Success: &success,
+	})
+}
+
 func (c *client) drainOutput() []OutputEvent {
 	c.outputMu.Lock()
 	defer c.outputMu.Unlock()

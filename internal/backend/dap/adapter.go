@@ -16,14 +16,24 @@ import (
 // The differences between adapters are entirely in these two functions. Keeping
 // them declarative is what makes "add a runtime" a profile rather than a
 // project, which is the whole reason for choosing DAP over three native APIs.
+// dialer opens another connection to an adapter already running. Nil for
+// adapters that serve one session per process; js-debug needs it because its
+// child sessions share the port the parent announced.
+type dialer func() (*conn, error)
+
 type Adapter struct {
 	// Language is the name an agent uses to ask for this runtime.
 	Language string
 	// Install is the command a user runs when the toolchain is missing.
 	Install string
 
-	// command builds the adapter process.
-	command func() (*exec.Cmd, error)
+	// start launches the adapter and hands back a connection to it.
+	//
+	// Each profile knows how to reach itself, rather than the backend switching
+	// on a transport enum: debugpy speaks over the pipes of the process we
+	// start, js-debug listens on a TCP port and announces it. Those are not two
+	// settings of one mechanism, they are two mechanisms.
+	start func() (*exec.Cmd, *conn, dialer, error)
 	// launchArgs builds the DAP launch request body, which is adapter-specific
 	// by design: the protocol deliberately leaves it open.
 	launchArgs func(req model.LaunchRequest) (map[string]any, error)
@@ -40,13 +50,37 @@ type Adapter struct {
 
 // Adapters is the registry. Ruby is present although it is being retired,
 // because rdbg speaks DAP and supporting it costs one entry here.
+// Adapters is the registry of runtimes this server will actually accept.
+//
+// node is deliberately absent. Its profile is written and most of it works --
+// launch, stepping, hit counts, breakpoints that bind -- but a stop does not
+// reliably land in the frame the breakpoint named, so evaluation and
+// set_variable fail against names that are genuinely not in the frame reached.
+// Registering it would mean declaring set_variable and eval_calls_functions as
+// supported while they do not work, which is the exact dishonesty the
+// conformance suite exists to catch. It goes in when the suite is green, not
+// before.
 var Adapters = map[string]*Adapter{
 	"python": python,
+}
+
+// developmentAdapters are profiles under construction. They are reachable only
+// from their own tests, so the work stays visible and runnable without being
+// offered to an agent as if it were finished.
+var developmentAdapters = map[string]*Adapter{
+	"node":       node,
+	"javascript": node,
+	"typescript": node,
 }
 
 func Lookup(language string) (*Adapter, error) {
 	a, found := Adapters[strings.ToLower(language)]
 	if !found {
+		if _, underway := developmentAdapters[strings.ToLower(language)]; underway {
+			return nil, fmt.Errorf(
+				"%s is not supported yet: the adapter profile exists but a stop does not reliably land in the frame the breakpoint named, so evaluation in that frame fails. It will be offered when its conformance suite is green",
+				language)
+		}
 		known := make([]string, 0, len(Adapters))
 		for name := range Adapters {
 			known = append(known, name)
@@ -76,18 +110,32 @@ var python = &Adapter{
 	// debugpy binds function breakpoints but does not report their location.
 	symbolBreakpointsUsable: false,
 
-	command: func() (*exec.Cmd, error) {
+	start: func() (*exec.Cmd, *conn, dialer, error) {
 		exe := pythonExe()
 		// debugpy ships its own DAP adapter; running it as a module keeps it
 		// bound to the interpreter that will do the debugging, which is the
 		// pairing that actually has to match.
 		check := exec.Command(exe, "-c", "import debugpy")
 		if out, err := check.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf(
+			return nil, nil, nil, fmt.Errorf(
 				"debugpy is not installed for %s. Install it with: %s -m pip install debugpy\n%s",
 				exe, exe, strings.TrimSpace(string(out)))
 		}
-		return exec.Command(exe, "-m", "debugpy.adapter"), nil
+		cmd := exec.Command(exe, "-m", "debugpy.adapter")
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if err := cmd.Start(); err != nil {
+			return nil, nil, nil, fmt.Errorf("could not start the python debug adapter: %w", err)
+		}
+		// debugpy serves one session per adapter process, so there is nothing
+		// to dial a second time.
+		return cmd, newConn(stdin, stdout), nil, nil
 	},
 
 	launchArgs: func(req model.LaunchRequest) (map[string]any, error) {
@@ -148,4 +196,14 @@ func absolute(workDir, target string) string {
 		return target
 	}
 	return filepath.Join(workDir, target)
+}
+
+// NewDevelopmentAdapter reaches a profile that is still being built. It exists
+// for that profile's own tests; nothing an agent can call goes through it.
+func NewDevelopmentAdapter(language string) (*Adapter, error) {
+	a, found := developmentAdapters[strings.ToLower(language)]
+	if !found {
+		return nil, fmt.Errorf("no adapter under construction for %q", language)
+	}
+	return a, nil
 }

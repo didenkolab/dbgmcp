@@ -317,6 +317,22 @@ func (b *Backend) describeStop(ctx context.Context, ev StoppedEvent) (model.Stop
 			}
 		}
 	}
+	// Some adapters report every stop with the same unspecific reason and an
+	// empty hitBreakpointIds -- js-debug sends "entry" for the entry stop and
+	// for a breakpoint alike, with identical bodies. When the protocol will not
+	// say, the position is the only evidence left: a stop standing exactly on a
+	// breakpoint we set is attributed to it.
+	//
+	// This is a heuristic and is reported as one. It cannot see a breakpoint
+	// that did not bind, and it will claim a breakpoint for a step that happens
+	// to land on the same line.
+	if len(out.Frames) > 0 && out.BreakpointID == "" && out.Reason != model.StopPanic {
+		if id := b.breakpointAt(out.Frames[0].File, out.Frames[0].Line); id != "" {
+			out.BreakpointID = id
+			out.Reason = model.StopBreakpoint
+		}
+	}
+
 	if len(out.Frames) > 0 && out.Frames[0].File != "" {
 		out.Source = readSourceSpan(out.Frames[0].File, out.Frames[0].Line, 4)
 	}
@@ -337,6 +353,26 @@ func reasonFor(dapReason string) model.StopReason {
 	default:
 		return model.StopUnknown
 	}
+}
+
+// breakpointAt finds a breakpoint this session set at exactly this place.
+func (b *Backend) breakpointAt(file string, line int) string {
+	runtimeFile := b.pathMap.ToRuntime(file)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for tracked, list := range b.breakpoints {
+		if tracked != runtimeFile && tracked != file {
+			continue
+		}
+		for _, t := range list {
+			// Compare against where it bound, not where it was asked for: an
+			// adapter may move a breakpoint to the next executable line.
+			if t.spec.Line == line || t.boundLine == line {
+				return strconv.Itoa(t.localID)
+			}
+		}
+	}
+	return ""
 }
 
 func (b *Backend) localIDFor(remoteID int) string {
