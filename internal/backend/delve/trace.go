@@ -54,7 +54,8 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 		case p.Location.Symbol != "":
 			locs, _, err := c.FindLocation(api.EvalScope{GoroutineID: -1}, p.Location.Symbol, false, nil)
 			if err != nil || len(locs) == 0 {
-				return model.Transcript{}, fmt.Errorf("probe %d: could not resolve %q", i, p.Location.Symbol)
+				return model.Transcript{}, fmt.Errorf("probe %d: could not resolve %q%s.%s",
+					i, p.Location.Symbol, delveSaid(err), symbolAdvice(b.OptimisationsDisabled(b.mode)))
 			}
 			req.Addr = locs[0].PC
 		case p.Location.File != "":
@@ -262,4 +263,36 @@ func (b *Backend) finishTranscript(out model.Transcript, probes []model.Probe, c
 // resolved here, so there is one answer to what a probe records.
 func wantsWholeFrame(p model.Probe) bool {
 	return len(p.Record) == 1 && p.Record[0] == model.RecordEverythingInScope
+}
+
+// delveSaid keeps the debugger's own words instead of replacing them. They were
+// being discarded, which left "could not resolve" as the entire explanation for
+// several different problems.
+func delveSaid(err error) string {
+	if err == nil {
+		return ""
+	}
+	return " (" + err.Error() + ")"
+}
+
+// symbolAdvice names the reason a symbol is usually missing from a binary this
+// server did not build.
+//
+// A short function is inlined by default, so it has no symbol to break on at all
+// -- and an agent attached to a running service hits this immediately, with
+// nothing in the message to suggest the binary is the problem rather than the name.
+func symbolAdvice(optimisationsDisabled bool) string {
+	if optimisationsDisabled {
+		return " Check the spelling and the package qualifier, for example main.lineTotal or (*Cart).Add."
+	}
+	// Measured against an optimised build rather than assumed: the symbol is gone,
+	// a line inside the inlined function is gone, a line whose call was eliminated
+	// is gone, and a line that does survive reports its variables as unreadable
+	// because they live in registers. So there is one remedy worth giving, and
+	// "probe by file and line instead" is not it.
+	return " This binary was built with optimisations on, so short functions are inlined and have no symbol to" +
+		" break on. Lines inside them are gone too, and variables on the lines that remain are often held in" +
+		" registers and come back unreadable. To debug a running service properly, build it with" +
+		" `-gcflags=all=-N -l`. Without that, expect to place probes only on lines that survived, and to be" +
+		" told `unreadable` for much of what they hold."
 }

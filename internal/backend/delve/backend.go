@@ -31,6 +31,11 @@ type Backend struct {
 	curFrame int
 	pathMap  model.PathMapping
 	info     Info
+	// mode is kept because what a failure means depends on how the target was
+	// started: a symbol missing from a binary this server built with
+	// optimisations off means a typo, and from one it merely attached to it
+	// usually means inlining.
+	mode model.LaunchMode
 }
 
 // Tool reports which Delve this backend is actually using, so an agent
@@ -86,6 +91,7 @@ func (b *Backend) Launch(ctx context.Context, req model.LaunchRequest) error {
 		return err
 	}
 	b.info = info
+	b.mode = req.Mode
 	if _, err := b.sup.start(ctx, info.Path, req); err != nil {
 		return err
 	}

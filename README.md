@@ -227,6 +227,14 @@ has what only a debugger it drives itself can do: `describe_backend`, `explain_v
 
 ## Known gaps
 
+- **Attaching to an optimised binary gets you much less than attaching to one built for
+  debugging.** Measured, not assumed: a short function is inlined and has no symbol to break on,
+  lines inside it are gone, a line whose call was eliminated is gone, and variables on the lines
+  that do survive are often held in registers and come back `unreadable`. Probing by file and line
+  does not rescue this. To debug a running service properly, build it with `-gcflags=all=-N -l`.
+  The transcript says `unreadable` rather than showing an empty value, so the limit is visible
+  rather than silent.
+
 Stated plainly, so nobody mistakes the test suite for more than it is.
 
 - **Go, Python and JavaScript.** Go goes through Delve's native API; Python and JavaScript through
