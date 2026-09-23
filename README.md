@@ -6,6 +6,54 @@
 
 Debug programs with breakpoints, from an AI agent, **without an IDE**. Go, Python and JavaScript/TypeScript.
 
+## Why
+
+Reading code tells you what a program is meant to do. It is silent on what it did. Every conclusion
+drawn from reading is taken on trust -- and an agent reading code reaches those conclusions faster,
+and states them more confidently, than a person would.
+
+This asks the program instead.
+
+### Three questions, one call each
+
+| The question | The tool |
+|---|---|
+| What happened across this loop, all thousand iterations of it? | `trace_execution` |
+| Why is this value wrong? | `explain_value` |
+| It works on this input and fails on that one -- where do they part? | `diff_runs` |
+
+Each is a whole question rather than a primitive. A loop costs one call instead of one call per
+iteration, because the debugger evaluates the expressions itself and resumes on its own. A wrong
+value comes back as its own history -- what it was, what it became, where, with what stack -- rather
+than as somewhere to start guessing.
+
+The third has no substitute. Seven rules read a transcript and notice an anomalous *shape*: a trend
+that reversed, a value that froze, a first `nil`. None of them can tell a wrong number from a right
+one, because nothing in a single run says what the number should have been. **A second run says it.**
+The passing run is the specification, and the first place the failing run departs from it is the
+answer.
+
+### What it costs to use
+
+The benchmark this project holds itself to is an acceptance test that locates a wrong value at
+runtime in **six MCP calls**, and fails if that number grows. Round trips are the budget: an agent
+that spends twenty calls on one variable has usually lost the thread by the tenth.
+
+### The same vocabulary with and without an IDE
+
+Twenty-four tool names are shared verbatim with our [JetBrains debugger
+plugin](https://github.com/didenkolab/jetbrains-debugger-mcp-plugin), so one agent and one companion
+skill drive an IDE session and a headless one without branching on which they got.
+
+### And nothing claims a capability it does not have
+
+`describe_backend` reports what the debugger underneath can actually do. That report is not
+documentation: one conformance suite runs against every backend and checks it **both ways** -- a
+declared capability has to work, an undeclared one has to refuse and name what is missing. A
+declaration is one line and a capability is not, so the two drift apart by default.
+
+---
+
 `dbgmcp` is an MCP server that drives a headless [Delve](https://github.com/go-delve/delve) over
 its native RPC API. It runs anywhere Go runs -- a terminal, a container, CI -- and needs no editor.
 
@@ -50,9 +98,9 @@ or `get_stack_trace`.
 counting lines, no breakage when something is inserted above.
 
 **One response carries the whole situation.** `wait_for_pause` returns location, reason,
-execution unit, stack, variables and source together. The benchmark for this project is the
-acceptance test, which locates a wrong value at runtime in **six MCP calls** and fails if that
-number grows.
+execution unit, stack, variables and source together, which is most of where the six-call budget
+above is won: following it with `get_variables` and `get_stack_trace` spends calls on data already
+in hand.
 
 **Variables come back flat, and the path is the expression.**
 
@@ -67,10 +115,6 @@ be less useful.
 Each value also carries `presence`, which separates a real value from a `nil` and from one the
 debugger could not read. All three used to render as the same string, which produced two defects and
 would have produced false divergences the moment two runs were compared.
-
-**Capabilities are data.** `describe_backend` reports what this debugger can actually do --
-watchpoints, non-suspending tracing, per-unit hit counts, calling functions during evaluation.
-Plan against it instead of discovering the limits by failing into them.
 
 **`trace_execution`: a whole run in one call.** Declare where to record and what to record, and get
 the transcript back from one call. Delve evaluates the expressions itself at every hit and resumes
@@ -138,9 +182,10 @@ the earliest point they stopped agreeing. One call.
 
 The passing run is the specification. `findings` cannot supply one -- nothing in a single transcript
 says what a value should have been -- so this is the tool that turns "the number is wrong" into a
-file and a line. It separates four kinds of divergence, because they send a reader to different
+file and a line. It separates five kinds of divergence, because they send a reader to different
 places: a differing value, a value present in one run and absent in the other (usually a branch not
-taken), a differing number of hits (a different path), and a probe reached in only one run.
+taken), a differing number of hits (a different path), a probe reached in only one run, and a probe
+reached by a different number of execution units (a difference in concurrency rather than in data).
 
 Two things it refuses to fake. Execution units are matched between the runs by the order they
 arrived at a probe, never by id -- a goroutine id is assigned within one run, and comparing ids
@@ -157,12 +202,10 @@ and every test function by name. An IDE plugin can list run configurations becau
 them; with no IDE there is nothing to list, so they are derived from the source instead -- without
 executing anything.
 
-**Tool names match our [JetBrains debugger plugin](https://github.com/didenkolab/jetbrains-debugger-mcp-plugin)** wherever the semantics match, so one
-agent and one companion skill work with an IDE and without one. Twenty-four tools are shared verbatim.
-The rest divide honestly: the plugin has what only an IDE can do (`find_usages`, the quick fixes,
-run configurations), and this server has what only a debugger it drives itself can do
-(`describe_backend`, `explain_value`, `set_watchpoint`, `get_unit_ancestors`, `diff_runs`,
-`list_debug_targets`).
+**Where the two surfaces differ, they differ honestly.** Of the tools not shared with the plugin, it
+has what only an IDE can do -- `find_usages`, the quick fixes, run configurations -- and this server
+has what only a debugger it drives itself can do: `describe_backend`, `explain_value`,
+`set_watchpoint`, `get_unit_ancestors`, `diff_runs`, `list_debug_targets`.
 
 ## Known gaps
 
