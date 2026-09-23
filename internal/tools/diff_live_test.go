@@ -168,3 +168,69 @@ func TestDiffRunsRefusesToAttach(t *testing.T) {
 		t.Errorf("refusal does not name the problem and the alternative: %q", text)
 	}
 }
+
+// testPython is the interpreter the Python fixture runs under. The repository
+// keeps an isolated virtualenv for it so the suite never depends on whatever is
+// installed in the developer's active environment.
+func testPython(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the test source")
+	}
+	venv := filepath.Join(filepath.Dir(thisFile), "..", "..", ".venv-test", "bin", "python")
+	if _, err := os.Stat(venv); err != nil {
+		t.Skip("no .venv-test with debugpy; create it with: python3 -m venv .venv-test && .venv-test/bin/pip install debugpy")
+	}
+	return venv
+}
+
+func TestLiveDiffRunsWorksOnASecondRuntime(t *testing.T) {
+	// diff_runs is language-neutral by construction: it compares transcripts,
+	// and a transcript is the same shape whichever backend produced it. That is
+	// an argument, not evidence, until it has been run against a backend that
+	// reaches the debuggee by a completely different route -- here a DAP adapter
+	// instead of Delve's own RPC.
+	//
+	// It also exercises the args path, which the Go case does not: there the two
+	// runs differ by a test filter.
+	t.Setenv("DBGMCP_PYTHON", testPython(t))
+
+	_, thisFile, _, _ := runtime.Caller(0)
+	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "testdata", "diffpair_py")
+	src := filepath.Join(dir, "pricing.py")
+
+	in := DiffRunsIn{
+		Language: "python", Mode: "debug", Target: "pricing.py", WorkDir: dir,
+		RunA: RunVariantIn{Label: "ordinary"},
+		RunB: RunVariantIn{Label: "loyal", Args: []string{"--loyal"}},
+		Probes: []ProbeIn{
+			{File: src, Line: lineContaining(t, src, "# COUPON"), Record: []string{"price", "percent"}},
+			{File: src, Line: lineContaining(t, src, "# CHARGE"), Record: []string{"price"}},
+		},
+		TimeoutSec: 120,
+	}
+
+	r := NewRegistry(session.NewStore())
+	res, out, err := r.diffRuns(context.Background(), nil, in)
+	if err != nil {
+		t.Fatalf("diff_runs: %v", err)
+	}
+	if res != nil && res.IsError {
+		t.Fatalf("diff_runs failed: %s", contentText(res.Content))
+	}
+
+	if out.Compared == 0 {
+		t.Fatalf("nothing was compared: run_a=%+v run_b=%+v", out.RunA, out.RunB)
+	}
+	if out.First == nil {
+		t.Fatalf("the two runs were reported as agreeing. run_a=%+v run_b=%+v", out.RunA, out.RunB)
+	}
+	// The same answer as the Go fixture, from a different debugger.
+	if out.First.Probe != 1 || out.First.Expression != "price" {
+		t.Errorf("first divergence at probe %d on %q, want probe 1 on price", out.First.Probe, out.First.Expression)
+	}
+	if out.First.Left != "800" || out.First.Right != "900" {
+		t.Errorf("prices = %q vs %q, want 800 vs 900", out.First.Left, out.First.Right)
+	}
+}
