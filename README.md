@@ -223,6 +223,14 @@ must demonstrably work; an undeclared one must refuse with a message naming what
 This is not decoration. A declaration is one line and a capability is not, so the two drift apart by
 default; the suite is what stops them.
 
+**What the suite does not reach, stated so green is not mistaken for covered.** `attach` is skipped
+on every hosted runner -- neither the Linux nor the macOS leg permits taking control of a process it
+did not start -- so the one path that touches somebody else's running process is exercised only on a
+developer's machine. Its safety property, that detaching leaves the process alive, is asserted by
+`TestLiveAttachLeavesTheProcessRunning`; run it locally before trusting attach against anything you
+care about. Two further skips are honest rather than missing: stepping with a watchpoint where
+watchpoints are not declared, and a `nil` error literal the macOS backend will not evaluate.
+
 ## Development
 
 ```bash
