@@ -567,3 +567,38 @@ func lineContaining(t *testing.T, file, needle string) int {
 	t.Fatalf("%s no longer contains %q", file, needle)
 	return 0
 }
+
+func TestLiveAProbeCanRecordTheWholeFrame(t *testing.T) {
+	// The case this exists for: a test failed in CI, the output names a file and a
+	// line, and nobody is there to say which variables matter. Naming them is
+	// better when you can -- this is for when you cannot.
+	b := startFixture(t, model.LaunchDebug)
+
+	probes := []model.Probe{{
+		Location: model.Location{Symbol: "main.lineTotal"},
+		Record:   []string{model.RecordEverythingInScope},
+		MaxHits:  1,
+	}}
+	tr, err := b.Trace(context.Background(), probes, 90*time.Second)
+	if err != nil {
+		t.Fatalf("trace: %v", err)
+	}
+	if len(tr.Hits) == 0 {
+		t.Fatal("the probe never fired")
+	}
+
+	hit := tr.Hits[0]
+	// The argument has to be there: when a function returns the wrong answer,
+	// what went in is usually the more useful half.
+	if _, found := hit.Values["it"]; !found {
+		t.Errorf("the frame's argument is missing; recorded %v", hit.Values)
+	}
+	if len(hit.Values) < 2 {
+		t.Errorf("recorded %d value(s), expected the whole frame: %v", len(hit.Values), hit.Values)
+	}
+	// And it must have cost one call, like any other probe -- the whole point is
+	// that Delve loads the frame itself rather than the agent asking for it.
+	if tr.Status != model.TraceCompleted && tr.Status != model.TraceFinished {
+		t.Errorf("status %q, want the trace to have run to its budget", tr.Status)
+	}
+}

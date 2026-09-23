@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/didenkolab/dbgmcp/internal/diffruns"
@@ -184,6 +185,14 @@ func buildProbes(in []ProbeIn, tool string) ([]model.Probe, string) {
 		}
 		if len(p.Record) == 0 {
 			return nil, fmt.Sprintf("Probe %d records nothing. Give it at least one expression, or use set_breakpoint instead.", i)
+		}
+		// "Everything, plus these two" has no sensible reading: the expressions
+		// would either duplicate what the frame already carries or silently lose
+		// to it. One answer per probe.
+		if slices.Contains(p.Record, model.RecordEverythingInScope) && len(p.Record) > 1 {
+			return nil, fmt.Sprintf("Probe %d mixes %q with named expressions. Ask for one or the other: "+
+				"%q records every argument and local in the frame, which already includes anything you would name.",
+				i, model.RecordEverythingInScope, model.RecordEverythingInScope)
 		}
 		probes = append(probes, model.Probe{
 			Location: model.Location{File: p.File, Line: p.Line, Symbol: p.Symbol},

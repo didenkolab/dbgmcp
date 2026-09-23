@@ -128,6 +128,12 @@ here. An agent chasing a race reads that from the response rather than from this
 
 ### From a pipeline
 
+The whole recipe, including a ready step for GitLab CI and GitHub Actions, is in
+[docs/CI.md](docs/CI.md). `ci/debug-failing-test.sh` needs no configuration: the
+failing test's name, its package and the line it gave up on are already in
+`go test` output.
+
+
 A failing test in CI has no conversation to hold, so tracing is also a command:
 
 ```bash

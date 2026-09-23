@@ -7,6 +7,19 @@ versioning](https://semver.org).
 
 ### Added
 
+- **A probe can record the whole frame.** `-probe file:line=*`, or `"record": ["*"]`,
+  captures every argument and local at the hit instead of expressions named in
+  advance. Delve loads the frame itself and sends it with the hit, so this still
+  costs no round trip per iteration. It exists for the case where nothing is known
+  yet: a test failed in CI, the output names a line, and nobody is there to say
+  which variables matter. Naming them is better when you can. Adapters that can only
+  evaluate expressions refuse it by name rather than evaluating something called `*`.
+- **`ci/debug-failing-test.sh` and [docs/CI.md](docs/CI.md)** — a pipeline step that
+  re-runs the first failing test under the debugger and leaves a report, configuring
+  nothing: the test's name, its package and the failing line are all in `go test`
+  output already. Ready snippets for GitLab CI and GitHub Actions. It always exits
+  zero, because a diagnostic that can break a pipeline stops being run.
+
 - **`dbgmcp explain`** — follow one value from a command line. The tool had been available to an
   agent since the start and to a pipeline not at all, so this server advertised three questions it
   answers in one call and let a script reach two of them. The report leads with the last change and

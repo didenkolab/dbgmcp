@@ -5,9 +5,19 @@ package model
 // Declaring the expressions up front is what buys the whole saving: the
 // debugger evaluates them itself on every hit, so a ten-thousand-iteration
 // trace costs one call rather than ten thousand.
+// RecordEverythingInScope asks a probe for every argument and local at the hit,
+// instead of expressions named in advance.
+//
+// It exists for the case where nothing is known yet: a test failed in CI, the
+// output names a file and a line, and nobody is there to say which variables
+// matter. Naming them is better when you can; this is for when you cannot.
+const RecordEverythingInScope = "*"
+
 type Probe struct {
 	Location Location `json:"location"`
-	Record   []string `json:"record"`
+	// Record is the expressions to evaluate at every hit. A single
+	// RecordEverythingInScope entry means the whole frame instead.
+	Record []string `json:"record"`
 	// MaxHits caps what this probe contributes. Zero means "until the program
 	// ends or the trace times out".
 	MaxHits int `json:"max_hits,omitempty"`

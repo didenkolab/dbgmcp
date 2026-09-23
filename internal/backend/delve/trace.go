@@ -42,6 +42,14 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 
 	for i, p := range probes {
 		req := &api.Breakpoint{Tracepoint: true, Variables: p.Record}
+		if wantsWholeFrame(p) {
+			// Delve loads the frame itself and sends it with the hit, so this
+			// still costs no round trip per iteration -- the saving the whole
+			// probe mechanism exists for.
+			cfg := loadConfig(model.DefaultValueBudget())
+			req.Variables = nil
+			req.LoadArgs, req.LoadLocals = &cfg, &cfg
+		}
 		switch {
 		case p.Location.Symbol != "":
 			locs, _, err := c.FindLocation(api.EvalScope{GoroutineID: -1}, p.Location.Symbol, false, nil)
@@ -187,7 +195,16 @@ func (b *Backend) collectHits(state *api.DebuggerState, probes []model.Probe, by
 		// without consulting the request.
 		if th.BreakpointInfo != nil {
 			exprs := probes[probeIdx].Record
-			for j, v := range th.BreakpointInfo.Variables {
+			recorded := th.BreakpointInfo.Variables
+			if wantsWholeFrame(probes[probeIdx]) {
+				// Arguments first, for the same reason get_variables puts them
+				// first: when a function returns the wrong answer, what went in
+				// is usually the more useful half.
+				recorded = append(append([]api.Variable{}, th.BreakpointInfo.Arguments...),
+					th.BreakpointInfo.Locals...)
+				exprs = nil
+			}
+			for j, v := range recorded {
 				name := v.Name
 				if j < len(exprs) {
 					name = exprs[j]
@@ -238,4 +255,11 @@ func (b *Backend) finishTranscript(out model.Transcript, probes []model.Probe, c
 		out.Message += " Some probes never fired, so an empty transcript there means a misplaced probe rather than no data."
 	}
 	return out
+}
+
+// wantsWholeFrame reports whether a probe asked for everything in scope rather
+// than for named expressions. Mixing the two is refused at the edge rather than
+// resolved here, so there is one answer to what a probe records.
+func wantsWholeFrame(p model.Probe) bool {
+	return len(p.Record) == 1 && p.Record[0] == model.RecordEverythingInScope
 }

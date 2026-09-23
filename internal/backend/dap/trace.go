@@ -41,6 +41,15 @@ func (b *Backend) Trace(ctx context.Context, probes []model.Probe, timeout time.
 		if len(p.Record) == 0 {
 			return model.Transcript{}, fmt.Errorf("probe %d records nothing", i)
 		}
+		// Refused by name rather than by evaluating an expression literally
+		// called "*" and reporting whatever the adapter makes of it.
+		for _, expr := range p.Record {
+			if expr == model.RecordEverythingInScope {
+				return model.Transcript{}, fmt.Errorf(
+					"probe %d asked to record everything in scope, which this adapter cannot do: "+
+						"it evaluates expressions and has no way to enumerate a frame. Name the expressions instead", i)
+			}
+		}
 		bp, err := b.SetBreakpoint(ctx, model.Breakpoint{
 			Location: p.Location, Record: p.Record, Suspend: model.SuspendNone,
 		})

@@ -17,8 +17,8 @@ type Divergence struct {
 	// deliberately not used -- a goroutine or thread id is assigned within one
 	// run and means nothing across two.
 	Unit string `json:"unit,omitempty"`
-	File       string `json:"file,omitempty"`
-	Line       int    `json:"line,omitempty"`
+	File string `json:"file,omitempty"`
+	Line int    `json:"line,omitempty"`
 	// Left and Right are the two readings, in the order the runs were given.
 	Left  string `json:"left,omitempty"`
 	Right string `json:"right,omitempty"`
